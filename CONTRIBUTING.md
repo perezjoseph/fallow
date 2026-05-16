@@ -85,6 +85,52 @@ A minimal plugin needs:
 
 See the [Plugin Authoring Guide](docs/plugin-authoring.md) for the full trait API and external plugin format.
 
+## Editing the JSON output contract
+
+Fallow's JSON output schema lives in `docs/output-schema.json` (JSON Schema draft-07) and is consumed by downstream tools (VS Code extension TypeScript codegen, GitHub Action jq scripts, AI agents using AJV validation).
+
+The schema covers two layers, with different ownership rules:
+
+### Layer 1: types derived from Rust
+
+The per-finding structs in `crates/types/src/results.rs` and `crates/core/src/duplicates/types.rs`, the JSON-layer augmentation types in `crates/types/src/output.rs`, the per-finding action wrappers in `crates/types/src/output_health.rs`, the health output subtree in `crates/cli/src/health_types/`, the shared envelope and utility shapes in `crates/types/src/envelope.rs`, and the per-command envelope structs in `crates/cli/src/output_envelope.rs` all carry `#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]`. The full list of derived definitions is `derived_definition_names()` in `crates/cli/src/bin/schema_emit.rs`.
+
+The health and envelope types live on `fallow-cli` (the binary crate) rather than `fallow-types`, so deriving `JsonSchema` on them required a sibling `schema` cargo feature on `fallow-cli`. The `schema-emit` feature now depends on `fallow-cli/schema` alongside `fallow-types/schema` + `fallow-core/schema`, so a single `cargo run -p fallow-cli --features schema-emit --bin fallow-schema-emit` covers the whole tree.
+
+A drift gate (`cargo test -p fallow-cli --features schema-emit --bin fallow-schema-emit`) compares the derived shape against the committed `docs/output-schema.json` and fails when:
+- a Rust struct gains a field that is missing from the schema,
+- a Rust struct loses a field that is still listed in the schema,
+- a Rust field is required but the schema has it optional (or vice versa).
+
+To regenerate the in-scope `definitions` blocks against the Rust source of truth:
+
+```bash
+cargo run -p fallow-cli --features schema-emit --bin fallow-schema-emit > /tmp/emitted-schema.json
+# then reconcile the matching entries in docs/output-schema.json against /tmp/emitted-schema.json
+```
+
+A strict structural gate (`#[ignore]`d for now, runs with `-- --ignored`) covers shape-level drift (descriptions, integer formats, nullable union choices). It will land on the default gate once the prose-migration phase syncs descriptions into Rust doc comments.
+
+### Layer 2: hand-written sections
+
+Until a follow-up migrates them, these sections of `docs/output-schema.json` stay hand-maintained:
+
+- Top-level metadata (`$schema`, `title`, `oneOf`)
+- The `committed_property_refs_match_derived_property_refs` drift test catches `$ref`-value drift between derived and committed property shapes (e.g. if a future change repoints `CombinedOutput.dupes` away from `DuplicationReport`). The `#[ignore]`d strict structural gate covers descriptions, integer formats, and nullable-union shape choices; flipping it on is Phase 8's job.
+
+If you add a new finding type, envelope, or utility shape, derive `JsonSchema` on the matching Rust struct, register it in `derived_definition_names()`, and the drift gate forces the schema to follow. Adding a new envelope means adding a new file under `crates/cli/src/output_envelope.rs` and adding the type to the top-level `oneOf` in `docs/output-schema.json`.
+
+### After editing the schema
+
+If `docs/output-schema.json` changed, regenerate the VS Code extension's TypeScript types:
+
+```bash
+cd editors/vscode
+pnpm run codegen:types   # writes editors/vscode/src/generated/output-contract.d.ts
+```
+
+CI runs `pnpm run check:codegen` to confirm the committed generated file matches a fresh regeneration.
+
 ## Git conventions
 
 - **Conventional commits**: `feat:`, `fix:`, `chore:`, `refactor:`, `test:`, `docs:`

@@ -6,10 +6,14 @@ use std::time::Duration;
 use fallow_config::FallowConfig;
 use fallow_core::duplicates::DuplicationReport;
 use fallow_core::results::AnalysisResults;
+use fallow_types::envelope::{CheckSummary, ElapsedMs, EntryPoints, SchemaVersion, ToolVersion};
 
 use super::shared::NAMESPACE_BARREL_HINT;
 use super::{emit_json, normalize_uri};
 use crate::explain;
+use crate::output_envelope::{
+    CheckGroupedEntry, CheckGroupedOutput, CheckOutput, DupesOutput, GroupByMode, HealthOutput,
+};
 use crate::report::grouping::{OwnershipResolver, ResultGroup};
 
 /// JSON Pointer fragment URL describing the shape of the `value` field on an
@@ -87,46 +91,45 @@ pub(super) fn print_grouped_json(
     resolver: &OwnershipResolver,
     config_fixable: bool,
 ) -> ExitCode {
-    let root_prefix = format!("{}/", root.display());
-
-    let group_values: Vec<serde_json::Value> = groups
+    let entries: Vec<CheckGroupedEntry> = groups
         .iter()
-        .filter_map(|group| {
-            let mut value = serde_json::to_value(&group.results).ok()?;
-            strip_root_prefix(&mut value, &root_prefix);
-            inject_actions(&mut value, config_fixable);
-            harmonize_multi_kind_suppress_line_actions(&mut value);
-
-            if let serde_json::Value::Object(ref mut map) = value {
-                // Insert key, owners (section mode), and total_issues at the
-                // front by rebuilding the map.
-                let mut ordered = serde_json::Map::new();
-                ordered.insert("key".to_string(), serde_json::json!(group.key));
-                if let Some(ref owners) = group.owners {
-                    ordered.insert("owners".to_string(), serde_json::json!(owners));
-                }
-                ordered.insert(
-                    "total_issues".to_string(),
-                    serde_json::json!(group.results.total_issues()),
-                );
-                for (k, v) in map.iter() {
-                    ordered.insert(k.clone(), v.clone());
-                }
-                Some(serde_json::Value::Object(ordered))
-            } else {
-                Some(value)
-            }
+        .map(|group| CheckGroupedEntry {
+            key: group.key.clone(),
+            owners: group.owners.clone(),
+            total_issues: group.results.total_issues(),
+            results: group.results.clone(),
         })
         .collect();
 
-    let mut output = serde_json::json!({
-        "schema_version": SCHEMA_VERSION,
-        "version": env!("CARGO_PKG_VERSION"),
-        "elapsed_ms": elapsed.as_millis() as u64,
-        "grouped_by": resolver.mode_label(),
-        "total_issues": original.total_issues(),
-        "groups": group_values,
-    });
+    let envelope = CheckGroupedOutput {
+        schema_version: SchemaVersion(SCHEMA_VERSION),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(elapsed.as_millis() as u64),
+        grouped_by: group_by_mode_from_label(resolver.mode_label()),
+        total_issues: original.total_issues(),
+        groups: entries,
+        meta: None,
+    };
+
+    let mut output = match serde_json::to_value(&envelope) {
+        Ok(value) => value,
+        Err(e) => {
+            eprintln!("Error: failed to serialize grouped results: {e}");
+            return ExitCode::from(2);
+        }
+    };
+
+    let root_prefix = format!("{}/", root.display());
+    // Strip and inject per group separately so each `groups[]` entry carries
+    // its own action arrays (`inject_actions` and the suppression harmonizer
+    // only walk the top-level map).
+    if let Some(arr) = output.get_mut("groups").and_then(|v| v.as_array_mut()) {
+        for entry in arr {
+            strip_root_prefix(entry, &root_prefix);
+            inject_actions(entry, config_fixable);
+            harmonize_multi_kind_suppress_line_actions(entry);
+        }
+    }
 
     if explain {
         insert_meta(&mut output, explain::check_meta());
@@ -146,33 +149,6 @@ pub(super) fn print_grouped_json(
 )]
 pub(crate) const SCHEMA_VERSION: u32 = 6;
 const RUNTIME_COVERAGE_SCHEMA_VERSION: &str = "1";
-
-/// Build a JSON envelope with standard metadata fields at the top.
-///
-/// Creates a JSON object with `schema_version`, `version`, and `elapsed_ms`,
-/// then merges all fields from `report_value` into the envelope.
-/// Fields from `report_value` appear after the metadata header.
-fn build_json_envelope(report_value: serde_json::Value, elapsed: Duration) -> serde_json::Value {
-    let mut map = serde_json::Map::new();
-    map.insert(
-        "schema_version".to_string(),
-        serde_json::json!(SCHEMA_VERSION),
-    );
-    map.insert(
-        "version".to_string(),
-        serde_json::json!(env!("CARGO_PKG_VERSION")),
-    );
-    map.insert(
-        "elapsed_ms".to_string(),
-        serde_json::json!(elapsed.as_millis()),
-    );
-    if let serde_json::Value::Object(report_map) = report_value {
-        for (key, value) in report_map {
-            map.insert(key, value);
-        }
-    }
-    serde_json::Value::Object(map)
-}
 
 fn inject_runtime_coverage_schema_version(output: &mut serde_json::Value) {
     let serde_json::Value::Object(map) = output else {
@@ -248,77 +224,31 @@ pub fn build_json_with_config_fixable(
     elapsed: Duration,
     config_fixable: bool,
 ) -> Result<serde_json::Value, serde_json::Error> {
-    let results_value = serde_json::to_value(results)?;
+    let envelope = CheckOutput {
+        schema_version: SchemaVersion(SCHEMA_VERSION),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(elapsed.as_millis() as u64),
+        total_issues: results.total_issues(),
+        entry_points: results.entry_point_summary.as_ref().map(|ep| EntryPoints {
+            total: ep.total,
+            // Replace spaces with underscores so downstream dashboards can
+            // drill into individual sources by stable keys (e.g.
+            // `package.json`, `next.js`, `config_entry`).
+            sources: ep
+                .by_source
+                .iter()
+                .map(|(k, v)| (k.replace(' ', "_"), *v))
+                .collect(),
+        }),
+        summary: build_check_summary(results),
+        results: results.clone(),
+        baseline_deltas: None,
+        baseline: None,
+        regression: None,
+        meta: None,
+    };
 
-    let mut map = serde_json::Map::new();
-    map.insert(
-        "schema_version".to_string(),
-        serde_json::json!(SCHEMA_VERSION),
-    );
-    map.insert(
-        "version".to_string(),
-        serde_json::json!(env!("CARGO_PKG_VERSION")),
-    );
-    map.insert(
-        "elapsed_ms".to_string(),
-        serde_json::json!(elapsed.as_millis()),
-    );
-    map.insert(
-        "total_issues".to_string(),
-        serde_json::json!(results.total_issues()),
-    );
-
-    // Entry-point detection summary (metadata, not serialized via serde)
-    if let Some(ref ep) = results.entry_point_summary {
-        let sources: serde_json::Map<String, serde_json::Value> = ep
-            .by_source
-            .iter()
-            .map(|(k, v)| (k.replace(' ', "_"), serde_json::json!(v)))
-            .collect();
-        map.insert(
-            "entry_points".to_string(),
-            serde_json::json!({
-                "total": ep.total,
-                "sources": sources,
-            }),
-        );
-    }
-
-    // Per-category summary counts for CI dashboard consumption
-    let summary = serde_json::json!({
-        "total_issues": results.total_issues(),
-        "unused_files": results.unused_files.len(),
-        "unused_exports": results.unused_exports.len(),
-        "unused_types": results.unused_types.len(),
-        "private_type_leaks": results.private_type_leaks.len(),
-        "unused_dependencies": results.unused_dependencies.len()
-            + results.unused_dev_dependencies.len()
-            + results.unused_optional_dependencies.len(),
-        "unused_enum_members": results.unused_enum_members.len(),
-        "unused_class_members": results.unused_class_members.len(),
-        "unresolved_imports": results.unresolved_imports.len(),
-        "unlisted_dependencies": results.unlisted_dependencies.len(),
-        "duplicate_exports": results.duplicate_exports.len(),
-        "type_only_dependencies": results.type_only_dependencies.len(),
-        "test_only_dependencies": results.test_only_dependencies.len(),
-        "circular_dependencies": results.circular_dependencies.len(),
-        "boundary_violations": results.boundary_violations.len(),
-        "stale_suppressions": results.stale_suppressions.len(),
-        "unused_catalog_entries": results.unused_catalog_entries.len(),
-        "empty_catalog_groups": results.empty_catalog_groups.len(),
-        "unresolved_catalog_references": results.unresolved_catalog_references.len(),
-        "unused_dependency_overrides": results.unused_dependency_overrides.len(),
-        "misconfigured_dependency_overrides": results.misconfigured_dependency_overrides.len(),
-    });
-    map.insert("summary".to_string(), summary);
-
-    if let serde_json::Value::Object(results_map) = results_value {
-        for (key, value) in results_map {
-            map.insert(key, value);
-        }
-    }
-
-    let mut output = serde_json::Value::Object(map);
+    let mut output = serde_json::to_value(&envelope)?;
     let root_prefix = format!("{}/", root.display());
     // strip_root_prefix must run before inject_actions so that injected
     // action fields (static strings and package names) are not processed
@@ -327,6 +257,40 @@ pub fn build_json_with_config_fixable(
     inject_actions(&mut output, config_fixable);
     harmonize_multi_kind_suppress_line_actions(&mut output);
     Ok(output)
+}
+
+/// Compute the per-category `CheckSummary` from analysis results.
+///
+/// The `unused_dependencies` field is the COMBINED count across regular,
+/// dev, and optional dependencies (the JSON layer has folded these three
+/// since the schema was first published; the per-section arrays still
+/// live at the top level of `CheckOutput`).
+fn build_check_summary(results: &AnalysisResults) -> CheckSummary {
+    CheckSummary {
+        total_issues: results.total_issues(),
+        unused_files: results.unused_files.len(),
+        unused_exports: results.unused_exports.len(),
+        unused_types: results.unused_types.len(),
+        private_type_leaks: results.private_type_leaks.len(),
+        unused_dependencies: results.unused_dependencies.len()
+            + results.unused_dev_dependencies.len()
+            + results.unused_optional_dependencies.len(),
+        unused_enum_members: results.unused_enum_members.len(),
+        unused_class_members: results.unused_class_members.len(),
+        unresolved_imports: results.unresolved_imports.len(),
+        unlisted_dependencies: results.unlisted_dependencies.len(),
+        duplicate_exports: results.duplicate_exports.len(),
+        type_only_dependencies: results.type_only_dependencies.len(),
+        test_only_dependencies: results.test_only_dependencies.len(),
+        circular_dependencies: results.circular_dependencies.len(),
+        boundary_violations: results.boundary_violations.len(),
+        stale_suppressions: results.stale_suppressions.len(),
+        unused_catalog_entries: results.unused_catalog_entries.len(),
+        empty_catalog_groups: results.empty_catalog_groups.len(),
+        unresolved_catalog_references: results.unresolved_catalog_references.len(),
+        unused_dependency_overrides: results.unused_dependency_overrides.len(),
+        misconfigured_dependency_overrides: results.misconfigured_dependency_overrides.len(),
+    }
 }
 
 /// Recursively strip the root prefix from all string values in the JSON tree.
@@ -1778,8 +1742,16 @@ pub fn build_health_json(
     explain: bool,
     action_opts: HealthActionOptions,
 ) -> Result<serde_json::Value, serde_json::Error> {
-    let report_value = serde_json::to_value(report)?;
-    let mut output = build_json_envelope(report_value, elapsed);
+    let envelope = HealthOutput {
+        schema_version: SchemaVersion(SCHEMA_VERSION),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(elapsed.as_millis() as u64),
+        report: report.clone(),
+        grouped_by: None,
+        groups: None,
+        meta: None,
+    };
+    let mut output = serde_json::to_value(&envelope)?;
     let root_prefix = format!("{}/", root.display());
     strip_root_prefix(&mut output, &root_prefix);
     inject_runtime_coverage_schema_version(&mut output);
@@ -1834,16 +1806,6 @@ pub fn build_grouped_health_json(
     action_opts: HealthActionOptions,
 ) -> Result<serde_json::Value, serde_json::Error> {
     let root_prefix = format!("{}/", root.display());
-    let report_value = serde_json::to_value(report)?;
-    let mut output = build_json_envelope(report_value, elapsed);
-    strip_root_prefix(&mut output, &root_prefix);
-    inject_runtime_coverage_schema_version(&mut output);
-    inject_health_actions(&mut output, action_opts);
-
-    if let serde_json::Value::Object(ref mut map) = output {
-        map.insert("grouped_by".to_string(), serde_json::json!(grouping.mode));
-    }
-
     // Per-group sub-envelopes share the project-level suppression state:
     // baseline-active and config-disabled apply uniformly, so each group's
     // `actions` array honors the same opts AND each group emits its own
@@ -1851,6 +1813,23 @@ pub fn build_grouped_health_json(
     // is intentional: consumers that only walk the `groups` array (e.g.,
     // per-team dashboards) still see the omission reason without needing to
     // walk back up to the report root.
+    let envelope = HealthOutput {
+        schema_version: SchemaVersion(SCHEMA_VERSION),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(elapsed.as_millis() as u64),
+        report: report.clone(),
+        grouped_by: Some(group_by_mode_from_label(grouping.mode)),
+        // `groups` is serialised separately below so each entry can run
+        // through the path-stripping + actions injection passes (which only
+        // walk the top-level map).
+        groups: None,
+        meta: None,
+    };
+    let mut output = serde_json::to_value(&envelope)?;
+    strip_root_prefix(&mut output, &root_prefix);
+    inject_runtime_coverage_schema_version(&mut output);
+    inject_health_actions(&mut output, action_opts);
+
     let group_values: Vec<serde_json::Value> = grouping
         .groups
         .iter()
@@ -1903,9 +1882,17 @@ pub fn build_duplication_json(
     elapsed: Duration,
     explain: bool,
 ) -> Result<serde_json::Value, serde_json::Error> {
-    let report_value = serde_json::to_value(report)?;
-
-    let mut output = build_json_envelope(report_value, elapsed);
+    let envelope = DupesOutput {
+        schema_version: SchemaVersion(SCHEMA_VERSION),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(elapsed.as_millis() as u64),
+        report: report.clone(),
+        grouped_by: None,
+        total_issues: None,
+        groups: None,
+        meta: None,
+    };
+    let mut output = serde_json::to_value(&envelope)?;
     let root_prefix = format!("{}/", root.display());
     strip_root_prefix(&mut output, &root_prefix);
     inject_dupes_actions(&mut output);
@@ -1959,24 +1946,27 @@ pub fn build_grouped_duplication_json(
     elapsed: Duration,
     explain: bool,
 ) -> Result<serde_json::Value, serde_json::Error> {
-    let report_value = serde_json::to_value(report)?;
-    let mut output = build_json_envelope(report_value, elapsed);
     let root_prefix = format!("{}/", root.display());
+    // Mirror the grouped check / health envelopes which expose `total_issues`
+    // so MCP and CI consumers can read the same key across commands. For
+    // dupes the count is total clone groups (sum is preserved across
+    // grouping; each clone group is attributed to exactly one bucket).
+    let envelope = DupesOutput {
+        schema_version: SchemaVersion(SCHEMA_VERSION),
+        version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+        elapsed_ms: ElapsedMs(elapsed.as_millis() as u64),
+        report: report.clone(),
+        grouped_by: Some(group_by_mode_from_label(grouping.mode)),
+        total_issues: Some(report.clone_groups.len()),
+        // Per-group buckets are serialized separately below so each carries
+        // its own path-stripping + actions injection; splice them in via the
+        // `Value` post-pass.
+        groups: None,
+        meta: None,
+    };
+    let mut output = serde_json::to_value(&envelope)?;
     strip_root_prefix(&mut output, &root_prefix);
     inject_dupes_actions(&mut output);
-
-    if let serde_json::Value::Object(ref mut map) = output {
-        map.insert("grouped_by".to_string(), serde_json::json!(grouping.mode));
-        // Mirror the grouped check / health envelopes which expose
-        // `total_issues` so MCP and CI consumers can read the same key
-        // across all three commands. For dupes the count is total clone
-        // groups (sum is preserved across grouping; each clone group is
-        // attributed to exactly one bucket).
-        map.insert(
-            "total_issues".to_string(),
-            serde_json::json!(report.clone_groups.len()),
-        );
-    }
 
     let group_values: Vec<serde_json::Value> = grouping
         .groups
@@ -1998,6 +1988,20 @@ pub fn build_grouped_duplication_json(
     }
 
     Ok(output)
+}
+
+/// Map a free-form grouping mode label (`"package"`, `"owner"`, ...) to the
+/// typed [`GroupByMode`] enum. Unknown labels fall through to
+/// [`GroupByMode::Owner`] because the upstream grouping pipeline only emits
+/// the four documented modes; the fallback exists to keep this helper
+/// infallible without piping a Result through every grouped envelope builder.
+fn group_by_mode_from_label(label: &str) -> GroupByMode {
+    match label {
+        "directory" => GroupByMode::Directory,
+        "package" => GroupByMode::Package,
+        "section" => GroupByMode::Section,
+        _ => GroupByMode::Owner,
+    }
 }
 
 pub(super) fn print_grouped_duplication_json(
@@ -2154,8 +2158,16 @@ mod tests {
             ..Default::default()
         };
 
-        let report_value = serde_json::to_value(&report).expect("should serialize health report");
-        let mut output = build_json_envelope(report_value, Duration::from_millis(7));
+        let envelope = HealthOutput {
+            schema_version: SchemaVersion(SCHEMA_VERSION),
+            version: ToolVersion(env!("CARGO_PKG_VERSION").to_string()),
+            elapsed_ms: ElapsedMs(7),
+            report,
+            grouped_by: None,
+            groups: None,
+            meta: None,
+        };
+        let mut output = serde_json::to_value(&envelope).expect("should serialize health envelope");
         strip_root_prefix(&mut output, "/project/");
         inject_runtime_coverage_schema_version(&mut output);
         inject_health_actions(&mut output, HealthActionOptions::default());
@@ -3045,44 +3057,6 @@ mod tests {
         let meta = serde_json::json!({ "new": true });
         insert_meta(&mut output, meta.clone());
         assert_eq!(output["_meta"], meta);
-    }
-
-    // ── build_json_envelope ─────────────────────────────────────────
-
-    #[test]
-    fn build_json_envelope_has_metadata_fields() {
-        let report = serde_json::json!({ "findings": [] });
-        let elapsed = Duration::from_millis(42);
-        let output = build_json_envelope(report, elapsed);
-
-        assert_eq!(output["schema_version"], 6);
-        assert!(output["version"].is_string());
-        assert_eq!(output["elapsed_ms"], 42);
-        assert!(output["findings"].is_array());
-    }
-
-    #[test]
-    fn build_json_envelope_metadata_appears_first() {
-        let report = serde_json::json!({ "data": "value" });
-        let output = build_json_envelope(report, Duration::from_millis(10));
-
-        let keys: Vec<&String> = output.as_object().unwrap().keys().collect();
-        assert_eq!(keys[0], "schema_version");
-        assert_eq!(keys[1], "version");
-        assert_eq!(keys[2], "elapsed_ms");
-    }
-
-    #[test]
-    fn build_json_envelope_non_object_report() {
-        // If report_value is not an Object, only metadata fields appear
-        let report = serde_json::json!("not an object");
-        let output = build_json_envelope(report, Duration::from_millis(0));
-
-        let obj = output.as_object().unwrap();
-        assert_eq!(obj.len(), 3);
-        assert!(obj.contains_key("schema_version"));
-        assert!(obj.contains_key("version"));
-        assert!(obj.contains_key("elapsed_ms"));
     }
 
     // ── strip_root_prefix with null value ──
@@ -4200,13 +4174,49 @@ mod tests {
         let raw = std::fs::read_to_string(&schema_path)
             .expect("docs/output-schema.json must be readable for the drift-guard test");
         let schema: serde_json::Value = serde_json::from_str(&raw).expect("schema parses");
-        let enum_values: std::collections::BTreeSet<String> =
-            schema["definitions"]["HealthFindingAction"]["properties"]["type"]["enum"]
-                .as_array()
-                .expect("HealthFindingAction.type.enum is an array")
-                .iter()
-                .filter_map(|v| v.as_str().map(str::to_owned))
-                .collect();
+        // Phase 5 derives `HealthFindingActionType` from a Rust enum whose
+        // schemars derive produces `oneOf: [{const: ...}, ...]` (one branch
+        // per variant) rather than a flat `enum: [...]`. We accept either
+        // form here so the drift guard tolerates a future schemars-version
+        // flip back to the flat shape.
+        let type_field = &schema["definitions"]["HealthFindingAction"]["properties"]["type"];
+        let type_def = if let Some(reference) = type_field.get("$ref").and_then(|r| r.as_str()) {
+            let name = reference
+                .strip_prefix("#/definitions/")
+                .expect("HealthFindingAction.type $ref points into #/definitions/");
+            &schema["definitions"][name]
+        } else if let Some(arr) = type_field.get("allOf").and_then(|a| a.as_array())
+            && let Some(reference) = arr
+                .first()
+                .and_then(|v| v.get("$ref"))
+                .and_then(|r| r.as_str())
+        {
+            let name = reference
+                .strip_prefix("#/definitions/")
+                .expect("HealthFindingAction.type allOf $ref points into #/definitions/");
+            &schema["definitions"][name]
+        } else {
+            type_field
+        };
+        let mut enum_values: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        if let Some(arr) = type_def.get("enum").and_then(|e| e.as_array()) {
+            for v in arr {
+                if let Some(s) = v.as_str() {
+                    enum_values.insert(s.to_owned());
+                }
+            }
+        }
+        if let Some(arr) = type_def.get("oneOf").and_then(|e| e.as_array()) {
+            for branch in arr {
+                if let Some(s) = branch.get("const").and_then(|c| c.as_str()) {
+                    enum_values.insert(s.to_owned());
+                }
+            }
+        }
+        assert!(
+            !enum_values.is_empty(),
+            "could not extract HealthFindingActionType variants from schema (neither `enum` nor `oneOf` with `const` branches)"
+        );
 
         for ty in &emitted {
             assert!(

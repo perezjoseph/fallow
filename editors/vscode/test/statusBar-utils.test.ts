@@ -212,6 +212,29 @@ describe("buildParamsFromCli", () => {
     circular_dependencies: [],
     boundary_violations: [],
     stale_suppressions: [],
+    summary: {
+      total_issues: 0,
+      unused_files: 0,
+      unused_exports: 0,
+      unused_types: 0,
+      private_type_leaks: 0,
+      unused_dependencies: 0,
+      unused_enum_members: 0,
+      unused_class_members: 0,
+      unresolved_imports: 0,
+      unlisted_dependencies: 0,
+      duplicate_exports: 0,
+      type_only_dependencies: 0,
+      test_only_dependencies: 0,
+      circular_dependencies: 0,
+      boundary_violations: 0,
+      stale_suppressions: 0,
+      unused_catalog_entries: 0,
+      empty_catalog_groups: 0,
+      unresolved_catalog_references: 0,
+      unused_dependency_overrides: 0,
+      misconfigured_dependency_overrides: 0,
+    },
   });
 
   it("returns zero counts when both inputs are null", () => {
@@ -257,7 +280,7 @@ describe("buildParamsFromCli", () => {
         },
       ],
       unresolved_imports: [
-        { path: "d.ts", specifier: "./missing", line: 1, col: 0, actions: [] },
+        { path: "d.ts", specifier: "./missing", line: 1, col: 0, specifier_col: 0, actions: [] },
       ],
       private_type_leaks: [
         {
@@ -319,9 +342,6 @@ describe("buildParamsFromCli", () => {
 
   it("propagates duplication stats from the dupes result so the tooltip matches the status bar text", () => {
     const dupes: FallowDupesResult = {
-      schema_version: 6,
-      version: "0.0.0-test",
-      elapsed_ms: 0,
       clone_groups: [],
       clone_families: [],
       stats: {
