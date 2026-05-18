@@ -459,8 +459,7 @@ pub fn execute_check(opts: &CheckOptions<'_>) -> Result<CheckResult, ExitCode> {
         _ => None,
     };
 
-    let config_fixable = opts.config_path.is_some()
-        || fallow_config::FallowConfig::find_config_path(opts.root).is_some();
+    let config_fixable = crate::fix::is_config_fixable(opts.root, opts.config_path.as_ref());
 
     Ok(CheckResult {
         results,

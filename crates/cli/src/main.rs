@@ -374,15 +374,37 @@ enum Command {
         no_clear: bool,
     },
 
-    /// Auto-fix issues (remove unused exports, dependencies, enum members)
+    /// Auto-fix issues: remove unused exports, dependencies, and enum
+    /// members; add duplicate-export rules to a fallow config file.
+    ///
+    /// When no fallow config exists outside a monorepo subpackage, a
+    /// fresh `.fallowrc.json` is created from the same scaffolding
+    /// `fallow init` would emit (framework detection, `$schema`,
+    /// `entry`, etc.) and the duplicate-export rules are layered on
+    /// top. Inside a monorepo subpackage the create-fallback refuses
+    /// and points at the workspace root. Pass `--no-create-config` to
+    /// opt out of the create-fallback (recommended for pre-commit
+    /// hooks, CI bots, and `fallow watch`).
+    ///
+    /// Use `--dry-run` to preview source-file edits and config-file
+    /// diffs without writing.
     Fix {
-        /// Dry run — show what would be changed without modifying files
+        /// Dry run, show what would be changed without modifying files
         #[arg(long)]
         dry_run: bool,
 
         /// Skip confirmation prompt (required in non-TTY environments like CI or AI agents)
         #[arg(long, alias = "force")]
         yes: bool,
+
+        /// Refuse to create a new fallow config file when none exists.
+        /// Use this from pre-commit hooks, CI bots, and `fallow watch`
+        /// where silently materialising a new top-level config file would
+        /// surprise the user. The duplicate-export config-add path is
+        /// skipped with an explanatory message; source-file edits proceed
+        /// normally.
+        #[arg(long)]
+        no_create_config: bool,
     },
 
     /// Initialize a .fallowrc.json configuration file (optionally a git
@@ -2080,7 +2102,11 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
                 include_entry_exports: cli.include_entry_exports,
             })
         }
-        Command::Fix { dry_run, yes } => {
+        Command::Fix {
+            dry_run,
+            yes,
+            no_create_config,
+        } => {
             let production = match resolve_production_modes(cli, root, output, false, false, false)
             {
                 Ok(modes) => modes.for_analysis(fallow_config::ProductionAnalysis::DeadCode),
@@ -2096,6 +2122,7 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
                 dry_run,
                 yes,
                 production,
+                no_create_config,
             })
         }
         Command::Init {

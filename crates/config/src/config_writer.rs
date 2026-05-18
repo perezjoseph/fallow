@@ -78,7 +78,14 @@ pub fn add_ignore_exports_rule(path: &Path, entries: &[IgnoreExportRule]) -> Con
     Ok(())
 }
 
-fn add_ignore_exports_rule_to_string(
+/// Render the proposed content of a fallow config after appending
+/// `ignoreExports` rules, without touching the filesystem.
+///
+/// Used by [`add_ignore_exports_rule`] for the apply path and by
+/// `fallow fix --dry-run` to render a diff preview against the current
+/// on-disk content. Pass an empty string as `content` to render the
+/// create-from-scratch case.
+pub fn add_ignore_exports_rule_to_string(
     path: &Path,
     content: &str,
     entries: &[IgnoreExportRule],

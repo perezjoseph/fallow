@@ -527,6 +527,7 @@ fn fix_preview_args_with_all_options() {
         config: Some("config.json".to_string()),
         production: Some(true),
         workspace: Some("frontend".to_string()),
+        no_create_config: Some(true),
         no_cache: Some(true),
         threads: Some(4),
     };
@@ -539,6 +540,7 @@ fn fix_preview_args_with_all_options() {
             "--format",
             "json",
             "--quiet",
+            "--no-create-config",
             "--root",
             "/app",
             "--config",
@@ -560,6 +562,7 @@ fn fix_apply_args_with_all_options() {
         config: Some("config.json".to_string()),
         production: Some(true),
         workspace: Some("frontend".to_string()),
+        no_create_config: Some(true),
         no_cache: Some(true),
         threads: Some(4),
     };
@@ -572,6 +575,7 @@ fn fix_apply_args_with_all_options() {
             "--format",
             "json",
             "--quiet",
+            "--no-create-config",
             "--root",
             "/app",
             "--config",
@@ -584,6 +588,66 @@ fn fix_apply_args_with_all_options() {
             "frontend",
         ]
     );
+}
+
+#[test]
+fn fix_preview_args_no_create_config_in_isolation() {
+    // Verify --no-create-config is emitted in isolation, independent of
+    // other params. Sentinel test against a future refactor accidentally
+    // gating the flag emission on workspace/production presence.
+    let params = FixParams {
+        no_create_config: Some(true),
+        ..FixParams::default()
+    };
+    let args = build_fix_preview_args(&params);
+    assert_eq!(
+        args,
+        [
+            "fix",
+            "--dry-run",
+            "--format",
+            "json",
+            "--quiet",
+            "--no-create-config",
+        ]
+    );
+}
+
+#[test]
+fn fix_apply_args_no_create_config_in_isolation() {
+    let params = FixParams {
+        no_create_config: Some(true),
+        ..FixParams::default()
+    };
+    let args = build_fix_apply_args(&params);
+    assert_eq!(
+        args,
+        [
+            "fix",
+            "--yes",
+            "--format",
+            "json",
+            "--quiet",
+            "--no-create-config",
+        ]
+    );
+}
+
+#[test]
+fn fix_preview_args_no_create_config_false_omits_flag() {
+    // Some(false) and None must both omit the flag (default behavior is
+    // create-fallback ON).
+    for value in [None, Some(false)] {
+        let params = FixParams {
+            no_create_config: value,
+            ..FixParams::default()
+        };
+        let args = build_fix_preview_args(&params);
+        assert!(
+            !args.contains(&"--no-create-config".to_string()),
+            "no_create_config={value:?} must NOT emit the flag, got {args:?}",
+        );
+    }
 }
 
 // ── Argument building: project_info ───────────────────────────────

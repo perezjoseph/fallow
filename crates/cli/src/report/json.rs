@@ -3,7 +3,6 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
-use fallow_config::FallowConfig;
 use fallow_core::duplicates::DuplicationReport;
 use fallow_core::results::AnalysisResults;
 use fallow_types::envelope::{CheckSummary, ElapsedMs, EntryPoints, SchemaVersion, ToolVersion};
@@ -210,7 +209,7 @@ pub fn build_json(
         results,
         root,
         elapsed,
-        FallowConfig::find_config_path(root).is_some(),
+        crate::fix::is_config_fixable(root, None),
     )
 }
 
@@ -2692,7 +2691,11 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_export_add_to_config_is_not_auto_fixable_without_config() {
+    fn duplicate_export_add_to_config_is_auto_fixable_when_create_fallback_allowed() {
+        // No config file exists, and the dir is NOT inside a monorepo
+        // subpackage, so `fallow fix` can safely create one. The action
+        // must surface as auto_fixable: true (per the per-instance flip
+        // documented on AddToConfigAction).
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
         let mut results = AnalysisResults::default();
@@ -2713,6 +2716,46 @@ mod tests {
         });
 
         let output = build_json(&results, root, Duration::ZERO).unwrap();
+        let actions = output["duplicate_exports"][0]["actions"]
+            .as_array()
+            .unwrap();
+        assert_eq!(actions[0]["type"], "add-to-config");
+        assert_eq!(actions[0]["auto_fixable"], true);
+    }
+
+    #[test]
+    fn duplicate_export_add_to_config_is_not_auto_fixable_in_monorepo_subpackage() {
+        // A workspace marker above the invocation directory means
+        // `fallow fix` would refuse to create a per-subpackage config.
+        // The action must surface as auto_fixable: false so agents and
+        // IDEs don't blindly pipe into `fallow fix --yes`.
+        let dir = tempfile::tempdir().unwrap();
+        let workspace = dir.path();
+        std::fs::write(
+            workspace.join("pnpm-workspace.yaml"),
+            "packages:\n  - 'packages/*'\n",
+        )
+        .unwrap();
+        let sub = workspace.join("packages/ui");
+        std::fs::create_dir_all(&sub).unwrap();
+        let mut results = AnalysisResults::default();
+        results.duplicate_exports.push(DuplicateExport {
+            export_name: "Button".to_string(),
+            locations: vec![
+                DuplicateLocation {
+                    path: sub.join("src/ui.ts"),
+                    line: 10,
+                    col: 0,
+                },
+                DuplicateLocation {
+                    path: sub.join("src/components.ts"),
+                    line: 25,
+                    col: 0,
+                },
+            ],
+        });
+
+        let output = build_json(&results, &sub, Duration::ZERO).unwrap();
         let actions = output["duplicate_exports"][0]["actions"]
             .as_array()
             .unwrap();

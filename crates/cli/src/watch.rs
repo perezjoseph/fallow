@@ -118,8 +118,7 @@ fn analyze_and_report(config: &fallow_config::ResolvedConfig, opts: &WatchOption
         summary: false,
         show_explain_tip: true,
         baseline_matched: None,
-        config_fixable: opts.config_path.is_some()
-            || fallow_config::FallowConfig::find_config_path(&config.root).is_some(),
+        config_fixable: crate::fix::is_config_fixable(&config.root, opts.config_path.as_ref()),
         health_action_opts: report::HealthActionOptions::default(),
     };
     let report_code = report::print_results(&results, &ctx, config.output, None);

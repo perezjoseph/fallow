@@ -11,6 +11,9 @@ pub fn build_fix_preview_args(params: &FixParams) -> Vec<String> {
         "json".to_string(),
         "--quiet".to_string(),
     ];
+    if params.no_create_config == Some(true) {
+        args.push("--no-create-config".to_string());
+    }
     push_global(
         &mut args,
         params.root.as_deref(),
@@ -31,6 +34,9 @@ pub fn build_fix_apply_args(params: &FixParams) -> Vec<String> {
         "json".to_string(),
         "--quiet".to_string(),
     ];
+    if params.no_create_config == Some(true) {
+        args.push("--no-create-config".to_string());
+    }
     push_global(
         &mut args,
         params.root.as_deref(),

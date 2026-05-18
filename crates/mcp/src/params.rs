@@ -249,6 +249,17 @@ pub struct FixParams {
     /// root. Passed through to the CLI's `--workspace` flag.
     pub workspace: Option<String>,
 
+    /// Refuse to create a new `.fallowrc.json` when none exists. By default,
+    /// `fallow fix` creates a fresh config file (using `fallow init`'s
+    /// framework-aware scaffolding) and layers `ignoreExports` rules on top
+    /// when it finds duplicate-export findings in a project with no fallow
+    /// config. Set this to `true` to opt out: the duplicate-export
+    /// config-add path is skipped with an explanatory entry; source-file
+    /// edits proceed normally. Recommended for agent flows where silently
+    /// materialising a new top-level file would surprise the user.
+    /// Forwards the CLI's `--no-create-config` flag.
+    pub no_create_config: Option<bool>,
+
     /// Disable the incremental parse cache. Forces a full re-parse of all files.
     pub no_cache: Option<bool>,
 

@@ -9,18 +9,18 @@ use crate::validate;
 // ── Project detection ──────────────────────────────────────────────
 
 /// Detected project characteristics used to tailor config scaffolding.
-struct ProjectInfo {
-    is_monorepo: bool,
-    workspace_patterns: Vec<String>,
-    workspace_tool: Option<String>,
-    has_typescript: bool,
-    test_framework: Option<String>,
-    ui_framework: Option<String>,
-    has_storybook: bool,
+pub struct ProjectInfo {
+    pub is_monorepo: bool,
+    pub workspace_patterns: Vec<String>,
+    pub workspace_tool: Option<String>,
+    pub has_typescript: bool,
+    pub test_framework: Option<String>,
+    pub ui_framework: Option<String>,
+    pub has_storybook: bool,
 }
 
 /// Inspect the project root and detect frameworks, workspace setup, etc.
-fn detect_project(root: &Path) -> ProjectInfo {
+pub fn detect_project(root: &Path) -> ProjectInfo {
     let is_pnpm = root.join("pnpm-workspace.yaml").exists();
     let has_typescript = root.join("tsconfig.json").exists();
     let has_storybook = root.join(".storybook").is_dir();
@@ -126,7 +126,12 @@ fn read_pnpm_workspace_patterns(root: &Path) -> Vec<String> {
 }
 
 /// Build a JSON config string tailored to the detected project.
-fn build_json_config(info: &ProjectInfo) -> String {
+///
+/// Used by `fallow init` (where this is the canonical scaffold) and by
+/// `fallow fix`'s missing-config fallback (so the seed file produced when
+/// auto-applying duplicate-export config rules matches what `fallow init`
+/// would have written, framework detection and all).
+pub fn build_json_config(info: &ProjectInfo) -> String {
     let mut config = serde_json::json!({
         "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
     });

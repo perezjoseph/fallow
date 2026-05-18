@@ -283,7 +283,7 @@ expression: redact_version(&json_str)
       "actions": [
         {
           "type": "add-to-config",
-          "auto_fixable": false,
+          "auto_fixable": true,
           "description": "Add an ignoreExports rule so these files are excluded from duplicate-export grouping (use when this duplication is an intentional namespace-barrel API).",
           "config_key": "ignoreExports",
           "value": [

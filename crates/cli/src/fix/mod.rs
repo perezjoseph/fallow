@@ -13,6 +13,8 @@ mod enum_members;
 mod exports;
 mod io;
 
+pub use config::is_config_fixable;
+
 pub struct FixOptions<'a> {
     pub root: &'a Path,
     pub config_path: &'a Option<PathBuf>,
@@ -23,6 +25,11 @@ pub struct FixOptions<'a> {
     pub dry_run: bool,
     pub yes: bool,
     pub production: bool,
+    /// Refuse to create a new fallow config file when none exists. The
+    /// duplicate-export config-add path is skipped with an explanatory
+    /// entry; source-file fixes proceed normally. Honored by
+    /// `fix::config::apply_config_fixes`.
+    pub no_create_config: bool,
 }
 
 pub fn run_fix(opts: &FixOptions<'_>) -> ExitCode {
@@ -103,6 +110,7 @@ pub fn run_fix(opts: &FixOptions<'_>) -> ExitCode {
         &results,
         opts.output,
         opts.dry_run,
+        opts.no_create_config,
         &mut fixes,
     );
 

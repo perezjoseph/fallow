@@ -45,8 +45,14 @@ use serde::Serialize;
 ///   without cross-workspace consumers the action stays `remove-dependency`
 ///   with `auto_fixable: true`.
 /// - `add-to-config` for `ignoreExports` (`duplicate-exports`): `true` when
-///   a fallow config file exists on disk; `false` otherwise (the applier
-///   declines to materialize a config file from scratch).
+///   `fallow fix` can safely apply the action without further user setup.
+///   That is: a fallow config file exists on disk, OR no config exists AND
+///   the working directory is NOT inside a monorepo subpackage (in which
+///   case the applier creates `.fallowrc.json` from `fallow init`'s
+///   framework-aware scaffolding and layers the new rules on top).
+///   `false` inside a monorepo subpackage with no workspace-root config
+///   (the applier refuses to fragment per-package configs across the
+///   monorepo and points at the workspace root instead).
 /// - `update-catalog-reference` (`unresolved-catalog-references`): always
 ///   `false` today (the catalog-switching applier is not wired in yet); the
 ///   field is non-singleton so that future enablement does not require a
@@ -71,7 +77,9 @@ pub enum IssueAction {
     SuppressFile(SuppressFileAction),
     /// Add the offending finding to the fallow config (e.g.
     /// `ignoreDependencies: ["lodash"]`). Auto-fixable for the array-shaped
-    /// `ignoreExports` variant when a config file exists; manual otherwise.
+    /// `ignoreExports` variant when `fallow fix` can safely apply the
+    /// action (config file exists, or no config exists and the working
+    /// directory is not inside a monorepo subpackage); manual otherwise.
     AddToConfig(AddToConfigAction),
 }
 
@@ -239,12 +247,18 @@ pub struct AddToConfigAction {
     pub kind: AddToConfigKind,
     /// True when `fallow fix` can apply this config action automatically.
     /// Evaluated PER FINDING, not per action type: `ignoreExports`
-    /// duplicate-export actions are auto-fixable when a fallow config file
-    /// exists and manual when one does not. Older scalar config-ignore
-    /// actions (e.g. `ignoreDependencies` on dependency findings) are always
-    /// manual today. Filter on this bool of each individual action, not on
-    /// the `type` alone. See the [`IssueAction`] enum-level docs for the
-    /// full list of per-instance flips.
+    /// duplicate-export actions are auto-fixable when `fallow fix` can
+    /// safely write the rule, which today means EITHER a fallow config
+    /// file already exists OR no config exists and the working directory
+    /// is NOT inside a monorepo subpackage (in which case the applier
+    /// creates `.fallowrc.json` from `fallow init`'s framework-aware
+    /// scaffolding). The action is `false` inside a monorepo subpackage
+    /// with no workspace-root config because the applier refuses to
+    /// fragment per-package configs across the monorepo. Older scalar
+    /// config-ignore actions (e.g. `ignoreDependencies` on dependency
+    /// findings) are always manual today. Filter on this bool of each
+    /// individual action, not on the `type` alone. See the [`IssueAction`]
+    /// enum-level docs for the full list of per-instance flips.
     pub auto_fixable: bool,
     /// Human-readable description of the config change.
     pub description: String,

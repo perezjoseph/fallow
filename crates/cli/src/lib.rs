@@ -46,6 +46,19 @@ mod dupes;
 /// Structured error output for CLI and JSON formats.
 pub mod error;
 
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "shared CLI library compiles bin-oriented support modules for reuse"
+)]
+mod fix;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "shared CLI library compiles bin-oriented support modules for reuse"
+)]
+mod init;
+
 /// Metric and rule definitions for explainable CLI output.
 pub mod explain;
 
