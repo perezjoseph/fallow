@@ -34,9 +34,9 @@ use schemars::generate::SchemaSettings;
 use serde_json::{Map, Value};
 
 use fallow_cli::health_types::{
-    ContributorEntry, ContributorIdentifierFormat, CoverageGapSummary, CoverageGaps, CoverageModel,
-    CoverageTier, ExceededThreshold, FileHealthScore, FindingSeverity, HealthActionsMeta,
-    HealthFinding, HealthScore, HealthScorePenalties, HealthSummary, HealthTrend, HotspotEntry,
+    ComplexityViolation, ContributorEntry, ContributorIdentifierFormat, CoverageGapSummary,
+    CoverageGaps, CoverageModel, CoverageTier, ExceededThreshold, FileHealthScore, FindingSeverity,
+    HealthActionsMeta, HealthScore, HealthScorePenalties, HealthSummary, HealthTrend, HotspotEntry,
     HotspotSummary, LargeFunctionEntry, OwnershipMetrics, RecommendationCategory,
     RefactoringTarget, RiskProfile, RuntimeCoverageReport, TargetThresholds, TrendCount,
     UntestedExport, UntestedExportFinding, UntestedFile, UntestedFileFinding, VitalSigns,
@@ -223,7 +223,14 @@ pub(crate) fn derived_definition_names() -> &'static [&'static str] {
         "IssueAction",
         "SuppressFileAction",
         "SuppressLineAction",
-        // crates/cli/src/health_types/ - health output subtree
+        // crates/cli/src/health_types/ - health output subtree.
+        // `HealthFinding` is the schema-emitted name (via
+        // `schemars(rename = "HealthFinding")`) for the Rust
+        // `ComplexityViolation` struct; the rename keeps the public schema
+        // and codegen-derived TS contracts stable across #384 B1 (this PR)
+        // and B2 (the future wrapper that will take over the
+        // `HealthFinding` name natively). See the doc comment on
+        // `ComplexityViolation` in `health_types/scores.rs`.
         "ContributorEntry",
         "CoverageGapSummary",
         "CoverageGaps",
@@ -390,9 +397,11 @@ fn finding_definition_names() -> &'static [&'static str] {
         // wrappers ship `actions[]` and `introduced` natively and the
         // bare types no longer carry the augmented fields.
         // Health findings (actions[] -> per-finding action wrapper).
-        // `introduced` attaches per `finding_augmentation` below: HealthFinding
-        // is audit-aware (carries `introduced`), HotspotEntry and
-        // RefactoringTarget are not.
+        // `introduced` attaches per `finding_augmentation` below:
+        // `HealthFinding` (the schema-emitted name for the Rust
+        // `ComplexityViolation` inner type, via `schemars(rename)`) is
+        // audit-aware (carries `introduced`), `HotspotEntry` and
+        // `RefactoringTarget` are not.
         "HealthFinding",
         "HotspotEntry",
         "RefactoringTarget",
@@ -424,7 +433,9 @@ fn finding_definition_names() -> &'static [&'static str] {
 /// The default augmentation attaches `actions: array<IssueAction>` and an
 /// `introduced` audit-mode flag. Health findings carry a typed action wrapper
 /// (`HealthFindingAction`, `HotspotAction`, `RefactoringTargetAction`), and
-/// only `HealthFinding` carries the audit `introduced` flag today.
+/// only `HealthFinding` (the schema-emitted name for the Rust
+/// `ComplexityViolation` inner type) carries the audit `introduced` flag
+/// today.
 #[derive(Debug, Clone, Copy)]
 struct FindingAugmentation {
     /// Schema `$ref` for the items in the `actions` array.
@@ -441,7 +452,8 @@ const DEFAULT_FINDING_AUGMENTATION: FindingAugmentation = FindingAugmentation {
 };
 
 /// Pick the augmentation for a specific finding. Health findings use typed
-/// per-finding action wrappers and (with the exception of `HealthFinding`)
+/// per-finding action wrappers and (with the exception of `HealthFinding`,
+/// the schema-emitted name for the Rust `ComplexityViolation` inner type)
 /// skip the audit `introduced` flag because hotspot ranking and refactoring
 /// targets do not run through `fallow audit`'s introduced-vs-inherited
 /// classifier.
@@ -579,7 +591,7 @@ fn derived_definitions() -> Map<String, Value> {
 
     // Health output subtree (crates/cli/src/health_types/).
     let _ = generator.subschema_for::<HealthSummary>();
-    let _ = generator.subschema_for::<HealthFinding>();
+    let _ = generator.subschema_for::<ComplexityViolation>();
     let _ = generator.subschema_for::<ExceededThreshold>();
     let _ = generator.subschema_for::<FindingSeverity>();
     let _ = generator.subschema_for::<CoverageTier>();
