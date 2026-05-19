@@ -16,10 +16,11 @@
 //!
 //! Runtime construction of these envelopes happens in
 //! `crates/cli/src/report/json.rs`; the JSON layer builds an envelope struct
-//! and converts it to a `serde_json::Value` via `serde_json::to_value`. Path
-//! relativisation and the per-finding `actions` injection still run as
-//! post-passes on the `Value` tree because they cross result-type boundaries
-//! that typed wrappers do not.
+//! and converts it to a `serde_json::Value` via `serde_json::to_value`. The
+//! only remaining work on the `Value` tree is path relativisation
+//! (`strip_root_prefix`) and the cross-result-type suppress-line action
+//! harmonizer (`harmonize_multi_kind_suppress_line_actions`); both span
+//! envelope boundaries that typed wrappers do not.
 //!
 //! Runtime emit for the CodeClimate, review-envelope, and coverage-setup
 //! shapes now flows through the typed structs in this module:

@@ -18,10 +18,9 @@ use crate::report::grouping::{OwnershipResolver, ResultGroup};
 /// Flip the position-0 `add-to-config` `auto_fixable` flag on every
 /// `duplicate_exports` finding when the fix-applier is ready to write into
 /// the user's config. Mirrors the per-instance flips for
-/// `unused_catalog_entries` (handled inside `with_actions`) and the legacy
-/// `inject_actions` post-pass that emitted `auto_fixable: config_fixable`
-/// at JSON-build time. No-op when `config_fixable` is `false`, since the
-/// wrapper already constructs with the conservative default.
+/// `unused_catalog_entries` (handled inside `with_actions`). No-op when
+/// `config_fixable` is `false`, since the typed wrapper already constructs
+/// every finding with the conservative `auto_fixable: false` default.
 fn apply_config_fixable_to_duplicate_exports(results: &mut AnalysisResults, config_fixable: bool) {
     if !config_fixable {
         return;
@@ -478,14 +477,11 @@ pub fn build_baseline_deltas_json<'a>(
 // time and flows through serde natively, so no post-pass walker is
 // needed for any health output anymore.
 
-// Duplication action injection retired in #409: the wire shape now flows
-// through typed `CloneGroupFinding` / `CloneFamilyFinding` /
-// `AttributedCloneGroupFinding` wrappers in `crate::output_dupes`, each
-// carrying its `actions[]` array natively. The legacy
-// `inject_dupes_actions` `serde_json::Value` post-pass (plus
-// `build_clone_family_actions` and `build_clone_group_actions`) used to
-// graft the same fields onto the serialized JSON after the bare findings
-// went through; both are no longer needed.
+// The dupes `actions` arrays are set on the typed `CloneGroupFinding`,
+// `CloneFamilyFinding`, and `AttributedCloneGroupFinding` wrappers in
+// `crate::output_dupes` at construction time and flow through serde
+// natively, so no post-pass walker is needed for any duplication output
+// anymore.
 
 /// Insert a `_meta` key into a JSON object value.
 fn insert_meta(output: &mut serde_json::Value, meta: serde_json::Value) {
@@ -2418,15 +2414,12 @@ mod tests {
         );
     }
 
-    // Tests for `inject_health_post_pass_actions` (the JSON post-pass that
-    // walked `hotspots[]` and `targets[]` arrays appending typed `actions`)
-    // have moved to `crates/cli/src/health_types/finding.rs::hotspot_target_tests`
+    // Tests for the retired hotspot / target action post-pass now live in
+    // `crates/cli/src/health_types/finding.rs::hotspot_target_tests`
     // alongside the typed `HotspotFinding` and `RefactoringTargetFinding`
     // wrappers and the typed `build_hotspot_actions` /
-    // `build_refactoring_target_actions` helpers they exercise. Issue #408
-    // (PR B3 of #384) replaced the JSON post-pass with typed wrappers that
-    // emit `actions` natively via serde. The four direct
-    // `suggest_codeowners_pattern` tests moved alongside that helper.
+    // `build_refactoring_target_actions` helpers they exercise. The four
+    // direct `suggest_codeowners_pattern` tests moved alongside that helper.
 
     #[test]
     fn health_finding_suppress_has_placement() {
