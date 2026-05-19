@@ -1,3 +1,16 @@
+//! MCP tool parameter structs.
+//!
+//! Field descriptions live in `///` doc comments. They flow into the published
+//! JSON Schema via schemars and into rustdoc identically, so there is one
+//! canonical source.
+//!
+//! Use `#[schemars(description = "...")]` only when the schema text must differ
+//! from rustdoc (e.g. a richer agent-facing string than what makes sense in the
+//! Rust API docs). Never combine both forms on the same field: the explicit
+//! attribute wins and a later edit to the `///` comment silently fails to
+//! reach the schema. A drift gate in `crates/mcp/src/server/tests/server_info.rs`
+//! fails the build when both forms co-occur.
+
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -60,9 +73,8 @@ pub struct AnalyzeParams {
     /// (pnpm.overrides key/value is unparsable; pnpm install will reject).
     pub issue_types: Option<Vec<String>>,
 
-    #[schemars(
-        description = "Set to true to check only boundary violations. Convenience alias for issue_types: [\"boundary-violations\"]"
-    )]
+    /// Set to true to check only boundary violations. Convenience alias for
+    /// `issue_types: ["boundary-violations"]`.
     pub boundary_violations: Option<bool>,
 
     /// Compare results against a saved baseline file. Only new issues (not in the baseline) are reported.
@@ -219,9 +231,8 @@ pub struct FindDupesParams {
     /// Number of parser threads. Defaults to available CPU cores.
     pub threads: Option<usize>,
 
-    #[schemars(
-        description = "Only report issues in files changed since this git ref (branch, tag, or commit SHA)"
-    )]
+    /// Only report issues in files changed since this git ref (branch, tag,
+    /// or commit SHA).
     pub changed_since: Option<String>,
 
     /// Group clone families by CODEOWNERS ownership, directory, workspace
@@ -275,13 +286,16 @@ pub struct ProjectInfoParams {
     /// Path to fallow config file.
     pub config: Option<String>,
 
-    #[schemars(description = "Show detected entry points")]
+    /// Show detected entry points.
     pub entry_points: Option<bool>,
-    #[schemars(description = "Show all discovered source files")]
+
+    /// Show all discovered source files.
     pub files: Option<bool>,
-    #[schemars(description = "Show active framework plugins")]
+
+    /// Show active framework plugins.
     pub plugins: Option<bool>,
-    #[schemars(description = "Show architecture boundary zones, rules, and per-zone file counts")]
+
+    /// Show architecture boundary zones, rules, and per-zone file counts.
     pub boundaries: Option<bool>,
 
     /// Disable the incremental parse cache. Forces a full re-parse of all files.
@@ -778,13 +792,16 @@ pub struct ExplainParams {
 /// Parameters for `list_boundaries`.
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct ListBoundariesParams {
-    #[schemars(description = "Project root directory (defaults to current working directory)")]
+    /// Project root directory (defaults to current working directory).
     pub root: Option<String>,
-    #[schemars(description = "Path to a fallow config file")]
+
+    /// Path to a fallow config file.
     pub config: Option<String>,
-    #[schemars(description = "Disable the incremental parse cache")]
+
+    /// Disable the incremental parse cache.
     pub no_cache: Option<bool>,
-    #[schemars(description = "Number of threads for file parsing (defaults to CPU core count)")]
+
+    /// Number of threads for file parsing (defaults to CPU core count).
     pub threads: Option<usize>,
 }
 

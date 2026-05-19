@@ -631,6 +631,44 @@ fn list_boundaries_schema_contains_expected_properties() {
     }
 }
 
+/// Pins that the fields whose descriptions were migrated from
+/// `#[schemars(description = ...)]` to `///` doc comments still surface a
+/// non-empty description in the published schema. A future drift here would
+/// drop user-visible prose from `tools/list`.
+#[test]
+fn converted_field_descriptions_render_in_schema() {
+    let server = FallowMcp::new();
+    let tools = server.tool_router.list_all();
+
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "project_info",
+            &["entry_points", "files", "plugins", "boundaries"],
+        ),
+        (
+            "list_boundaries",
+            &["root", "config", "no_cache", "threads"],
+        ),
+        ("analyze", &["boundary_violations"]),
+        ("find_dupes", &["changed_since"]),
+    ];
+
+    for (tool_name, fields) in cases {
+        let tool = tools.iter().find(|t| t.name == *tool_name).unwrap();
+        let schema: serde_json::Value = serde_json::to_value(&tool.input_schema).unwrap();
+        for field in *fields {
+            let desc = schema
+                .pointer(&format!("/properties/{field}/description"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            assert!(
+                !desc.is_empty(),
+                "{tool_name}.{field} should have a non-empty description in the schema"
+            );
+        }
+    }
+}
+
 #[test]
 fn check_runtime_coverage_schema_contains_expected_properties() {
     let server = FallowMcp::new();
@@ -845,6 +883,148 @@ fn all_tool_schemas_are_json_objects() {
             "tool '{name}' schema should have type=object"
         );
     }
+}
+
+// ── params.rs field-description style gate ────────────────────────
+
+/// Returns the 1-based line numbers of any field that carries BOTH a `///`
+/// doc comment AND a `#[schemars(description = ...)]` attribute (single or
+/// multi-line). The explicit attribute wins, so when both forms co-occur the
+/// doc comment silently fails to reach the schema.
+fn fields_with_both_doc_and_schemars_description(src: &str) -> Vec<usize> {
+    let lines: Vec<&str> = src.lines().collect();
+    let mut offenders: Vec<usize> = Vec::new();
+
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with("#[schemars(") {
+            continue;
+        }
+        // Walk forward to assemble the full attribute (single or multi-line)
+        // and confirm it carries a `description = ...` arg.
+        let mut full = String::new();
+        let mut depth: i32 = 0;
+        let mut j = i;
+        loop {
+            full.push_str(lines[j]);
+            full.push(' ');
+            for c in lines[j].chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+            }
+            if depth <= 0 || j + 1 >= lines.len() {
+                break;
+            }
+            j += 1;
+        }
+        if !full.contains("description") {
+            continue;
+        }
+
+        // Walk backwards from i looking for a `///` line, stopping at the
+        // first block boundary (blank line, prior field decl, struct opener
+        // or closer). Sibling attributes are transparent.
+        let mut has_doc = false;
+        let mut k = i;
+        while k > 0 {
+            k -= 1;
+            let prev = lines[k].trim();
+            if prev.is_empty() {
+                break;
+            }
+            if prev.starts_with("///") {
+                has_doc = true;
+                break;
+            }
+            if prev.starts_with("pub ") || prev.starts_with("pub(") {
+                break;
+            }
+            if prev.starts_with('{') || prev.starts_with('}') {
+                break;
+            }
+        }
+
+        if has_doc {
+            offenders.push(i + 1);
+        }
+    }
+    offenders
+}
+
+/// Drift gate: every param struct field uses EITHER a `///` doc comment OR a
+/// `#[schemars(description = "...")]` attribute, never both.
+#[test]
+fn params_fields_do_not_carry_both_doc_comment_and_schemars_description() {
+    let src = include_str!("../../params.rs");
+    let offenders = fields_with_both_doc_and_schemars_description(src);
+    assert!(
+        offenders.is_empty(),
+        "params.rs has fields carrying BOTH a `///` doc comment AND a \
+         `#[schemars(description = ...)]` attribute. The explicit attribute \
+         wins and rustdoc edits silently fail to reach the schema. Drop one \
+         of the two forms. Offending lines: {offenders:?}"
+    );
+}
+
+/// Positive-case gate test: synthetic source with the bad pattern is flagged.
+/// Without this test, a future refactor to the gate logic could silently turn
+/// it into a no-op and the CI would happily pass forever.
+#[test]
+fn gate_trips_on_combined_doc_and_schemars_description() {
+    let good = r#"
+pub struct A {
+    /// Plain doc only.
+    pub a: Option<bool>,
+
+    #[schemars(description = "Attr only")]
+    pub b: Option<bool>,
+}
+"#;
+    assert!(
+        fields_with_both_doc_and_schemars_description(good).is_empty(),
+        "good source should not trip the gate"
+    );
+
+    let bad_single_line = r#"
+pub struct A {
+    /// Doc says X.
+    #[schemars(description = "Attr says Y")]
+    pub a: Option<bool>,
+}
+"#;
+    assert!(
+        !fields_with_both_doc_and_schemars_description(bad_single_line).is_empty(),
+        "bad source (single-line attr) should trip the gate"
+    );
+
+    let bad_multi_line = r#"
+pub struct A {
+    /// Doc says X.
+    #[schemars(
+        description = "Attr says Y"
+    )]
+    pub a: Option<bool>,
+}
+"#;
+    assert!(
+        !fields_with_both_doc_and_schemars_description(bad_multi_line).is_empty(),
+        "bad source (multi-line attr) should trip the gate"
+    );
+
+    let benign_non_description = r"
+pub struct A {
+    /// Doc says X.
+    #[schemars(length(min = 1))]
+    pub a: String,
+}
+";
+    assert!(
+        fields_with_both_doc_and_schemars_description(benign_non_description).is_empty(),
+        "schemars(length/range/...) without description should not trip the gate"
+    );
 }
 
 // ── Server can be cloned (required for rmcp runtime) ───────────────
