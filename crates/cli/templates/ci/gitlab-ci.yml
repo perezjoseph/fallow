@@ -282,11 +282,11 @@ variables:
       # FALLOW_INSTALL_DRY_RUN is an internal hook used by ci/tests/run.sh to
       # exercise this block without invoking npm. Not a documented user knob.
       if [ "${FALLOW_INSTALL_DRY_RUN:-}" = "true" ]; then
-        echo "DRY RUN: npm install -g ${install_arg}"
+        echo "DRY RUN: npm install -g --ignore-scripts ${install_arg}"
         exit 0
       fi
 
-      npm install -g "$install_arg" || { echo "ERROR: Failed to install ${install_arg}"; exit 2; }
+      npm install -g --ignore-scripts "$install_arg" || { echo "ERROR: Failed to install ${install_arg}"; exit 2; }
 
       installed_version="$(fallow --version 2>/dev/null || echo 'unknown version')"
       echo "Installed fallow ${installed_version}"
