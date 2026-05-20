@@ -16,6 +16,7 @@ const {
   ED25519_SPKI_HEADER,
   SKIP_ENV,
 } = require('./verify-binary');
+const { getPlatformPackage } = require('./platform-package');
 
 function makeDigestProvider(dir) {
   return ({ assetName, binaryPath }) => {
@@ -213,6 +214,19 @@ function makePlatformDir(privateKey, options) {
   return dir;
 }
 
+function currentPlatformPackage() {
+  if (process.platform !== 'linux') {
+    return getPlatformPackage(process.platform, process.arch);
+  }
+  let libcFamily;
+  try {
+    libcFamily = require('detect-libc').familySync();
+  } catch {
+    libcFamily = undefined;
+  }
+  return getPlatformPackage(process.platform, process.arch, libcFamily);
+}
+
 test('normalizeDigest accepts sha256: prefix and bare hex', () => {
   const sample = 'a'.repeat(64);
   assert.equal(normalizeDigest('sha256:' + sample), sample);
@@ -263,6 +277,41 @@ test('verifyInstalled with dirOverride returns ok when every binary verifies', a
   });
   assert.equal(result.ok, true);
   assert.equal(result.package, '<override>');
+});
+
+test('verifyInstalled resolves a global npm install from the fallow package directory', async (t) => {
+  const pkg = currentPlatformPackage();
+  if (!pkg) {
+    t.skip('unsupported platform');
+    return;
+  }
+
+  const { privateKey, rawPub } = makeKeypair();
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fallow-vbtest-global-'));
+  t.after(() => cleanup(root));
+
+  const resolveFrom = path.join(root, 'node_modules', 'fallow');
+  const platformDir = path.join(root, 'node_modules', ...pkg.split('/'));
+  fs.mkdirSync(resolveFrom, { recursive: true });
+  fs.mkdirSync(platformDir, { recursive: true });
+  fs.writeFileSync(path.join(platformDir, 'package.json'), JSON.stringify({ name: pkg, version: '9.9.9' }));
+
+  const ext = process.platform === 'win32' ? '.exe' : '';
+  for (const base of ['fallow', 'fallow-lsp', 'fallow-mcp']) {
+    const binaryPath = path.join(platformDir, `${base}${ext}`);
+    const content = Buffer.from(`global install ${base}`);
+    fs.writeFileSync(binaryPath, content);
+    fs.writeFileSync(`${binaryPath}.sig`, crypto.sign(null, content, privateKey));
+  }
+
+  const result = await verifyInstalled({
+    resolveFrom,
+    verifyFn: (p) => _verifyWithKey(p, rawPub),
+    digestProvider: ({ binaryPath }) => crypto.createHash('sha256').update(fs.readFileSync(binaryPath)).digest('hex'),
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.package, pkg);
+  assert.equal(result.version, '9.9.9');
 });
 
 test('verifyInstalled with dirOverride fails fast on the first bad signature', async (t) => {

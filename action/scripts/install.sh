@@ -98,12 +98,13 @@ script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 action_root="${GITHUB_ACTION_PATH:-$(cd "$script_dir/../.." && pwd)}"
 verify_script="$action_root/npm/fallow/scripts/verify-binary.js"
 global_root="$(npm root -g)"
+global_fallow_root="$global_root/fallow"
 if [ ! -f "$verify_script" ]; then
   echo "::error::Verifier script not found at ${verify_script}; cannot verify fallow binaries"
   exit 1
 fi
 
-ACTION_VERIFY_SCRIPT="$verify_script" FALLOW_VERIFY_RESOLVE_FROM="$global_root" node <<'NODE'
+ACTION_VERIFY_SCRIPT="$verify_script" FALLOW_VERIFY_RESOLVE_FROM="$global_fallow_root" node <<'NODE'
 (async () => {
   const { verifyInstalled, SKIP_ENV } = require(process.env.ACTION_VERIFY_SCRIPT);
   const result = await verifyInstalled({ resolveFrom: process.env.FALLOW_VERIFY_RESOLVE_FROM });

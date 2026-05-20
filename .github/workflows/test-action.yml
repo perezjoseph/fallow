@@ -15,6 +15,14 @@ concurrency:
 
 permissions: {}
 
+env:
+  # This workflow runs the checked-out Action against the currently published
+  # npm package. During the PR window before a release, the verifier can be
+  # newer than the published platform packages and would fail on missing .sig
+  # files. The verifier's fail-closed behavior is covered by action/tests/run.sh
+  # and npm/fallow/scripts/verify-binary.test.js.
+  FALLOW_SKIP_BINARY_VERIFY: "1"
+
 jobs:
   test-jq-scripts:
     name: Test jq scripts
