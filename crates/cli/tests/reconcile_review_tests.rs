@@ -52,9 +52,40 @@ fn read_request(stream: &mut TcpStream) -> String {
     stream
         .set_read_timeout(Some(std::time::Duration::from_secs(5)))
         .expect("set read timeout");
-    let mut buffer = [0_u8; 8192];
-    let len = stream.read(&mut buffer).expect("read request");
-    String::from_utf8_lossy(&buffer[..len]).to_string()
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 1024];
+    loop {
+        let len = stream.read(&mut buffer).expect("read request");
+        if len == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..len]);
+        if request_is_complete(&request) {
+            break;
+        }
+    }
+    String::from_utf8_lossy(&request).to_string()
+}
+
+fn request_is_complete(request: &[u8]) -> bool {
+    let Some(header_end) = request
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|index| index + 4)
+    else {
+        return false;
+    };
+    let headers = String::from_utf8_lossy(&request[..header_end]);
+    let content_length = headers
+        .lines()
+        .find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+        })
+        .unwrap_or(0);
+    request.len() >= header_end + content_length
 }
 
 fn write_response(stream: &mut TcpStream, status: u16, body: &str) {
