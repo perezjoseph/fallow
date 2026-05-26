@@ -246,7 +246,11 @@ function readEmbeddedDigest(manifestPath, binaryFileName) {
 }
 
 function binaryTargetsForPlatform(platformId) {
-  const isWindows = process.platform === 'win32';
+  // Derive the `.exe` suffix from the platformId, not from the live
+  // process.platform. Production callers pass `<platform>-<arch>...` strings
+  // that already encode windows-ness (`win32-x64-msvc`, `win32-arm64-msvc`),
+  // and tests can synthesize a Windows verify without running on Windows.
+  const isWindows = typeof platformId === 'string' && platformId.startsWith('win32');
   const ext = isWindows ? '.exe' : '';
   return [
     { binary: `fallow${ext}`, asset: `fallow-${platformId}${ext}` },
@@ -258,6 +262,133 @@ function binaryTargetsForPlatform(platformId) {
 function isSkipRequested() {
   const v = process.env[SKIP_ENV];
   return v === '1' || v === 'true' || v === 'yes';
+}
+
+function currentPlatformPackageName() {
+  if (process.platform !== 'linux') {
+    return getPlatformPackage(process.platform, process.arch);
+  }
+  let libcFamily;
+  try {
+    libcFamily = require('detect-libc').familySync();
+  } catch {
+    libcFamily = undefined;
+  }
+  return getPlatformPackage(process.platform, process.arch, libcFamily);
+}
+
+function readManifestForPackage(manifestPath, pkg) {
+  let version;
+  try {
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    version = manifest.version;
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'manifest-invalid',
+      message: `cannot read platform package manifest for ${pkg}: ${err.message}`,
+      package: pkg,
+    };
+  }
+  if (typeof version !== 'string' || !version.trim()) {
+    return {
+      ok: false,
+      code: 'manifest-invalid',
+      message: `platform package ${pkg} does not declare a version`,
+      package: pkg,
+    };
+  }
+  return { ok: true, version };
+}
+
+// Shared platform-package resolution used by both the async and sync verify
+// paths. Returns either { ok: true, dir, manifestPath, pkg, version, platformId }
+// or { ok: false, code, message, package? } matching verifyInstalled's error
+// shape. dirOverride is a test-only knob; production callers must not set it.
+function resolvePlatformPackageForVerify(opts) {
+  if (typeof opts.dirOverride === 'string' && opts.dirOverride.length > 0) {
+    return {
+      ok: true,
+      dir: opts.dirOverride,
+      manifestPath: path.join(opts.dirOverride, 'package.json'),
+      pkg: '<override>',
+      version: opts.version || '0.0.0',
+      platformId: opts.platformId || 'test-platform',
+    };
+  }
+
+  const pkg = currentPlatformPackageName();
+  if (!pkg) {
+    return {
+      ok: false,
+      code: 'platform-unsupported',
+      message: `no prebuilt binary for ${process.platform}-${process.arch}`,
+    };
+  }
+
+  let dir;
+  let manifestPath;
+  try {
+    ({ dir, manifestPath } = platformPackageDir(pkg, opts.resolveFrom));
+  } catch (err) {
+    return {
+      ok: false,
+      code: 'platform-package-missing',
+      message: `platform package ${pkg} not installed: ${err.message}`,
+      package: pkg,
+    };
+  }
+
+  const manifest = readManifestForPackage(manifestPath, pkg);
+  if (!manifest.ok) return manifest;
+
+  return {
+    ok: true,
+    dir,
+    manifestPath,
+    pkg,
+    version: manifest.version,
+    platformId: pkg.replace(/^@fallow-cli\//, ''),
+  };
+}
+
+// Verify one binary against its sig + expected SHA-256. Used by both the
+// sync and async verify-installed entry points; the digest provider may be
+// sync (returns string) or async (returns Promise<string>), and the loop body
+// awaits the value regardless. Keeps the outer functions a flat for-loop so
+// cyclomatic + cognitive complexity stays low.
+async function verifyOneBinary(target, dir, pkg, manifestPath, verifyFn, digestProvider) {
+  const binaryPath = path.join(dir, target.binary);
+  const sigResult = verifyFn(binaryPath);
+  if (!sigResult.ok) {
+    return { ...sigResult, binary: binaryPath, package: pkg };
+  }
+  // Prefer the digest embedded in the platform package's package.json
+  // (written at release time by `npm-prep`). Falling back to the GitHub
+  // release API only when no embedded digest is present preserves
+  // backwards compatibility with platform packages published before #597.
+  let expectedDigest = manifestPath ? readEmbeddedDigest(manifestPath, target.binary) : null;
+  if (!expectedDigest && digestProvider) {
+    try {
+      expectedDigest = await digestProvider({ assetName: target.asset, binaryPath, packageName: pkg });
+    } catch (err) {
+      return {
+        ok: false,
+        code: 'digest-unavailable',
+        message: `cannot load SHA-256 digest for ${target.asset}: ${err.message}`,
+        binary: binaryPath,
+        package: pkg,
+      };
+    }
+  }
+  if (!expectedDigest) {
+    return { ok: false, code: 'digest-unavailable', message: 'no digest', binary: binaryPath, package: pkg };
+  }
+  const digestResult = verifyDigestAt(binaryPath, expectedDigest);
+  if (!digestResult.ok) {
+    return { ...digestResult, binary: binaryPath, package: pkg };
+  }
+  return { ok: true };
 }
 
 // Locate the platform package the wrapper would use at runtime and verify
@@ -289,102 +420,112 @@ async function verifyInstalled(options) {
     ? opts.digestProvider
     : ({ assetName, version }) => fetchReleaseDigest(version, assetName);
 
-  let dir;
-  let manifestPath;
-  let pkg;
-  let version;
-  let platformId;
-  if (typeof opts.dirOverride === 'string' && opts.dirOverride.length > 0) {
-    dir = opts.dirOverride;
-    pkg = '<override>';
-    version = opts.version || '0.0.0';
-    platformId = opts.platformId || 'test-platform';
-    // Lets tests drop a package.json next to the binaries to exercise the
-    // embedded-digest path. readEmbeddedDigest returns null when missing.
-    manifestPath = path.join(dir, 'package.json');
-  } else {
-    if (process.platform !== 'linux') {
-      pkg = getPlatformPackage(process.platform, process.arch);
-    } else {
-      let libcFamily;
-      try {
-        libcFamily = require('detect-libc').familySync();
-      } catch {
-        // detect-libc is a dependency, but tolerate its absence the same way
-        // postinstall.js already does.
-        libcFamily = undefined;
-      }
-      pkg = getPlatformPackage(process.platform, process.arch, libcFamily);
-    }
+  const resolved = resolvePlatformPackageForVerify(opts);
+  if (!resolved.ok) return resolved;
+  const { dir, manifestPath, pkg, version, platformId } = resolved;
 
-    if (!pkg) {
-      return { ok: false, code: 'platform-unsupported', message: `no prebuilt binary for ${process.platform}-${process.arch}` };
-    }
-
-    try {
-      ({ dir, manifestPath } = platformPackageDir(pkg, opts.resolveFrom));
-    } catch (err) {
-      return { ok: false, code: 'platform-package-missing', message: `platform package ${pkg} not installed: ${err.message}`, package: pkg };
-    }
-
-    platformId = pkg.replace(/^@fallow-cli\//, '');
-    try {
-      const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
-      version = manifest.version;
-    } catch (err) {
-      return { ok: false, code: 'manifest-invalid', message: `cannot read platform package manifest for ${pkg}: ${err.message}`, package: pkg };
-    }
-    if (typeof version !== 'string' || !version.trim()) {
-      return { ok: false, code: 'manifest-invalid', message: `platform package ${pkg} does not declare a version`, package: pkg };
-    }
-  }
+  // digestProvider here is always defined (the fallback above guarantees it),
+  // so verifyOneBinary always reaches a digest. Bind `version` into the
+  // provider so the per-binary loop body does not need to thread it.
+  const boundProvider = async (args) => digestProvider({ ...args, version });
 
   for (const target of binaryTargetsForPlatform(platformId)) {
-    const binaryPath = path.join(dir, target.binary);
-    const result = verify(binaryPath);
-    if (!result.ok) {
-      return { ...result, binary: binaryPath, package: pkg };
-    }
-    // Prefer the digest embedded in the platform package's package.json
-    // (written at release time by `npm-prep`). Falling back to the GitHub
-    // release API only when no embedded digest is present preserves
-    // backwards compatibility with platform packages published before #597.
-    // The shared-IP CI rate-limit failure mode that motivated #597 only
-    // affects the fallback path, so the steady-state install path is now
-    // fully offline.
-    let expectedDigest = manifestPath
-      ? readEmbeddedDigest(manifestPath, target.binary)
-      : null;
-    if (!expectedDigest) {
-      try {
-        expectedDigest = await digestProvider({
-          assetName: target.asset,
-          binaryPath,
-          packageName: pkg,
-          version,
-        });
-      } catch (err) {
-        return {
-          ok: false,
-          code: 'digest-unavailable',
-          message: `cannot load SHA-256 digest for ${target.asset}: ${err.message}`,
-          binary: binaryPath,
-          package: pkg,
-        };
-      }
-    }
-    const digestResult = verifyDigestAt(binaryPath, expectedDigest);
-    if (!digestResult.ok) {
-      return { ...digestResult, binary: binaryPath, package: pkg };
-    }
+    const result = await verifyOneBinary(target, dir, pkg, manifestPath, verify, boundProvider);
+    if (!result.ok) return result;
   }
   return { ok: true, package: pkg, version };
+}
+
+// Synchronous variant used by the lazy-verify first-run path in bin/fallow,
+// bin/fallow-lsp, and bin/fallow-mcp. Matches verifyInstalled's result shape
+// but never falls back to the GitHub Release API: callers that need network
+// fallback must use the async verifyInstalled instead. This keeps bin-wrapper
+// startup synchronous and bounded.
+//
+// options:
+//   allowSkipEnv   - if false, ignore FALLOW_SKIP_BINARY_VERIFY. Default true.
+//   dirOverride    - test-only directory containing binaries.
+//   verifyFn       - replaces verifyBinaryAt for tests.
+//   digestProvider - sync function ({ assetName, binaryPath, packageName, version })
+//                    returning a sha256 digest string or null. When absent and
+//                    no embedded digest is present, returns a
+//                    `digest-unavailable` error pointing the user at
+//                    `npm install fallow@latest` (the embedded-digest field
+//                    landed in 2.78.1 / #597; pre-#597 platform packages
+//                    cannot be lazily verified). When supplied (tests), used
+//                    in place of the embedded-digest read.
+//   resolveFrom    - module resolution base for locating platform packages.
+function verifyInstalledSync(options) {
+  const opts = options || {};
+  const skipEnvAllowed = opts.allowSkipEnv !== false;
+  if (skipEnvAllowed && isSkipRequested()) {
+    return { ok: true, skipped: true, reason: `${SKIP_ENV} is set` };
+  }
+
+  const verify = typeof opts.verifyFn === 'function' ? opts.verifyFn : verifyBinaryAt;
+  const digestProvider = typeof opts.digestProvider === 'function' ? opts.digestProvider : null;
+
+  const resolved = resolvePlatformPackageForVerify(opts);
+  if (!resolved.ok) return resolved;
+  const { dir, manifestPath, pkg, version, platformId } = resolved;
+
+  for (const target of binaryTargetsForPlatform(platformId)) {
+    const result = verifyOneBinarySync(target, dir, pkg, manifestPath, verify, digestProvider);
+    if (!result.ok) return result;
+  }
+  return { ok: true, package: pkg, version };
+}
+
+// Sync counterpart to verifyOneBinary. Different from the async version in
+// three ways: no `await`, the missing-embedded-digest path returns a clear
+// actionable error pointing the user at `npm install fallow@latest` (since
+// there is no network fallback in lazy mode), and the digestProvider is
+// optional (tests inject one; production callers rely on the embedded digest).
+function verifyOneBinarySync(target, dir, pkg, manifestPath, verifyFn, digestProvider) {
+  const binaryPath = path.join(dir, target.binary);
+  const sigResult = verifyFn(binaryPath);
+  if (!sigResult.ok) {
+    return { ...sigResult, binary: binaryPath, package: pkg };
+  }
+  let expectedDigest = manifestPath ? readEmbeddedDigest(manifestPath, target.binary) : null;
+  if (!expectedDigest && digestProvider) {
+    try {
+      expectedDigest = digestProvider({ assetName: target.asset, binaryPath, packageName: pkg });
+    } catch (err) {
+      return {
+        ok: false,
+        code: 'digest-unavailable',
+        message: `cannot load SHA-256 digest for ${target.asset}: ${err.message}`,
+        binary: binaryPath,
+        package: pkg,
+      };
+    }
+  }
+  if (!expectedDigest) {
+    return {
+      ok: false,
+      code: 'digest-unavailable',
+      message:
+        `no embedded SHA-256 digest for ${target.binary} in ${pkg} ` +
+        `(platform package predates fallow 2.78.1). ` +
+        `Run \`npm install fallow@latest\` to refresh, or set ${SKIP_ENV}=1 ` +
+        `to bypass verification (logged once per process).`,
+      binary: binaryPath,
+      package: pkg,
+    };
+  }
+  const digestResult = verifyDigestAt(binaryPath, expectedDigest);
+  if (!digestResult.ok) {
+    return { ...digestResult, binary: binaryPath, package: pkg };
+  }
+  return { ok: true };
 }
 
 module.exports = {
   verifyBinaryAt,
   verifyDigestAt,
   verifyInstalled,
+  verifyInstalledSync,
   _verifyWithKey,
   normalizeDigest,
   readEmbeddedDigest,
