@@ -512,7 +512,7 @@ jobs:
           key: miri
 
       - name: fallow-types
-        run: cargo +"$MIRI_TOOLCHAIN" miri test -p fallow-types --lib --tests
+        run: cargo +"$MIRI_TOOLCHAIN" miri test -p fallow-types --lib --tests -- --skip proptests
 
       - name: fallow-graph
         run: cargo +"$MIRI_TOOLCHAIN" miri test -p fallow-graph --lib --tests -- --skip proptests

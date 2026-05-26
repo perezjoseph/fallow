@@ -1012,6 +1012,7 @@ version = "2.81.0"
 dependencies = [
  "bitcode",
  "oxc_span",
+ "proptest",
  "schemars",
  "serde",
  "serde_json",

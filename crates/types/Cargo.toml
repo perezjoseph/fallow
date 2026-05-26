@@ -39,6 +39,7 @@ schema = ["dep:schemars"]
 
 [dev-dependencies]
 serde_json = { workspace = true }
+proptest = { workspace = true }
 
 [lints]
 workspace = true

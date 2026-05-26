@@ -29,6 +29,6 @@ cargo clippy --workspace --all-targets -- -D warnings
 # If you want to run the full suite locally before opening a PR:
 #   cargo test --workspace --all-targets
 #   RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
-#   rustup run nightly cargo miri test -p fallow-types --lib --tests
+#   rustup run nightly cargo miri test -p fallow-types --lib --tests -- --skip proptests
 
 echo "=== Done (~1 min). CI handles test, doc, miri on the PR ==="
