@@ -397,3 +397,295 @@ fn sarif_location(path: &Path, line: u32, col: u32) -> serde_json::Value {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fallow_core::results::{SecurityFinding, SecurityFindingKind, TraceHop, TraceHopRole};
+
+    /// Build a finding anchored under `root` with a three-hop client -> secret trace.
+    fn sample_finding(root: &Path) -> SecurityFinding {
+        SecurityFinding {
+            kind: SecurityFindingKind::ClientServerLeak,
+            path: root.join("src/app.tsx"),
+            line: 12,
+            col: 3,
+            evidence: "reaches process.env.SECRET_KEY".to_owned(),
+            trace: vec![
+                TraceHop {
+                    path: root.join("src/app.tsx"),
+                    line: 12,
+                    col: 3,
+                    role: TraceHopRole::ClientBoundary,
+                },
+                TraceHop {
+                    path: root.join("src/lib/util.ts"),
+                    line: 4,
+                    col: 0,
+                    role: TraceHopRole::Intermediate,
+                },
+                TraceHop {
+                    path: root.join("src/lib/secret.ts"),
+                    line: 8,
+                    col: 2,
+                    role: TraceHopRole::SecretSource,
+                },
+            ],
+            actions: vec![],
+        }
+    }
+
+    fn output_with(findings: Vec<SecurityFinding>, unresolved_edge_files: usize) -> SecurityOutput {
+        SecurityOutput {
+            schema_version: SecuritySchemaVersion::V1,
+            security_findings: findings,
+            unresolved_edge_files,
+        }
+    }
+
+    #[test]
+    fn relativize_strips_root_prefix() {
+        let root = Path::new("/proj/root");
+        let abs = root.join("src/app.tsx");
+        let rel = relativize(&abs, root);
+        assert_eq!(rel.to_string_lossy().replace('\\', "/"), "src/app.tsx");
+    }
+
+    #[test]
+    fn relativize_keeps_path_when_outside_root() {
+        let root = Path::new("/proj/root");
+        let outside = Path::new("/elsewhere/file.ts");
+        // Not under root: the original path is returned unchanged.
+        assert_eq!(relativize(outside, root), outside.to_path_buf());
+    }
+
+    #[test]
+    fn relativize_finding_relativizes_anchor_and_every_hop() {
+        let root = Path::new("/proj/root");
+        let finding = relativize_finding(sample_finding(root), root);
+        assert_eq!(
+            finding.path.to_string_lossy().replace('\\', "/"),
+            "src/app.tsx"
+        );
+        let hop_paths: Vec<String> = finding
+            .trace
+            .iter()
+            .map(|h| h.path.to_string_lossy().replace('\\', "/"))
+            .collect();
+        assert_eq!(
+            hop_paths,
+            vec!["src/app.tsx", "src/lib/util.ts", "src/lib/secret.ts"]
+        );
+    }
+
+    #[test]
+    fn fnv_hex_is_deterministic_and_16_hex_digits() {
+        let a = fnv_hex("security/client-server-leak:src/app.tsx:12");
+        let b = fnv_hex("security/client-server-leak:src/app.tsx:12");
+        assert_eq!(a, b, "same input must hash identically");
+        assert_eq!(a.len(), 16);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        // Distinct input yields a distinct digest (anchor line differs).
+        assert_ne!(a, fnv_hex("security/client-server-leak:src/app.tsx:13"));
+    }
+
+    #[test]
+    fn hop_role_labels_cover_every_role() {
+        assert_eq!(
+            hop_role_label(TraceHopRole::ClientBoundary),
+            "client boundary"
+        );
+        assert_eq!(hop_role_label(TraceHopRole::Intermediate), "intermediate");
+        assert_eq!(hop_role_label(TraceHopRole::SecretSource), "secret source");
+    }
+
+    #[test]
+    fn sarif_location_clamps_line_and_offsets_column() {
+        // A zero line clamps to 1; the 0-based column becomes 1-based.
+        let loc = sarif_location(Path::new("a\\b.ts"), 0, 0);
+        let region = &loc["physicalLocation"]["region"];
+        assert_eq!(region["startLine"], 1);
+        assert_eq!(region["startColumn"], 1);
+        // Backslash separators normalize to forward slashes in the URI.
+        assert_eq!(loc["physicalLocation"]["artifactLocation"]["uri"], "a/b.ts");
+    }
+
+    #[test]
+    fn human_summary_reports_zero_without_edge_line() {
+        let out = render_human_summary(&output_with(vec![], 0));
+        assert!(out.contains("0 candidates found"), "got: {out}");
+        assert!(!out.contains("Unresolved dynamic import cones"));
+    }
+
+    #[test]
+    fn human_summary_pluralizes_and_surfaces_unresolved_edges() {
+        let root = Path::new("/proj/root");
+        let out = render_human_summary(&output_with(vec![sample_finding(root)], 2));
+        assert!(out.contains("1 candidate found"), "got: {out}");
+        assert!(out.contains("Unresolved dynamic import cones: 2 client files."));
+    }
+
+    #[test]
+    fn human_render_empty_states_no_candidates() {
+        colored::control::set_override(false);
+        let out = render_human(&output_with(vec![], 0));
+        assert!(out.contains("No security candidates found."));
+        assert!(out.contains("Found 0 security candidates"));
+    }
+
+    #[test]
+    fn human_render_shows_finding_trace_and_next_action() {
+        colored::control::set_override(false);
+        let root = Path::new("/proj/root");
+        let finding = relativize_finding(sample_finding(root), root);
+        let out = render_human(&output_with(vec![finding], 0));
+        assert!(out.contains("client-server-leak"));
+        assert!(out.contains("src/app.tsx:12"));
+        assert!(out.contains("reaches process.env.SECRET_KEY"));
+        assert!(out.contains("trace:"));
+        assert!(out.contains("src/lib/secret.ts:8 (secret source)"));
+        assert!(out.contains("src/app.tsx:12 (client boundary)"));
+        assert!(out.contains("Next:"));
+        assert!(out.contains("Found 1 security candidate."));
+    }
+
+    #[test]
+    fn human_render_surfaces_unresolved_edge_blind_spot() {
+        colored::control::set_override(false);
+        let out = render_human(&output_with(vec![], 3));
+        assert!(out.contains("3 client files reached a dynamic import"));
+        assert!(out.contains("not a clean bill"));
+    }
+
+    #[test]
+    fn json_render_carries_schema_version_and_findings() {
+        let root = Path::new("/proj/root");
+        let finding = relativize_finding(sample_finding(root), root);
+        let rendered = render_json(&output_with(vec![finding], 1));
+        let value: serde_json::Value = serde_json::from_str(&rendered).expect("valid JSON");
+        assert_eq!(value["schema_version"], "1");
+        assert_eq!(value["unresolved_edge_files"], 1);
+        let findings = value["security_findings"].as_array().expect("array");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0]["kind"], "client-server-leak");
+        assert_eq!(findings[0]["path"], "src/app.tsx");
+    }
+
+    #[test]
+    fn sarif_render_emits_note_level_with_fingerprint_and_related_locations() {
+        let root = Path::new("/proj/root");
+        let finding = relativize_finding(sample_finding(root), root);
+        let rendered = render_sarif(&output_with(vec![finding], 0));
+        let sarif: serde_json::Value = serde_json::from_str(&rendered).expect("valid SARIF JSON");
+        assert_eq!(sarif["version"], "2.1.0");
+        let run = &sarif["runs"][0];
+        assert_eq!(run["tool"]["driver"]["name"], "fallow");
+        let result = &run["results"][0];
+        // Candidate framing: never error/warning, and no CWE tag.
+        assert_eq!(result["level"], "note");
+        assert_eq!(result["ruleId"], "security/client-server-leak");
+        assert_eq!(result["message"]["text"], "reaches process.env.SECRET_KEY");
+        // Trace hops surface as relatedLocations (3 hops).
+        assert_eq!(result["relatedLocations"].as_array().unwrap().len(), 3);
+        // Stable dedup fingerprint present for GHAS.
+        assert!(result["partialFingerprints"]["fallowSecurity/v1"].is_string());
+    }
+
+    #[test]
+    fn write_sarif_file_creates_parent_dir_and_writes_valid_sarif() {
+        let root = Path::new("/proj/root");
+        let finding = relativize_finding(sample_finding(root), root);
+        let output = output_with(vec![finding], 0);
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("nested/out.sarif");
+        write_sarif_file(&output, &path).expect("write succeeds and creates parent dir");
+        let written = std::fs::read_to_string(&path).expect("file exists");
+        let sarif: serde_json::Value = serde_json::from_str(&written).expect("valid SARIF JSON");
+        assert_eq!(sarif["version"], "2.1.0");
+    }
+
+    /// No explicit `--config`; static so the `&'a Option<PathBuf>` field borrows it.
+    const NO_CONFIG: Option<PathBuf> = None;
+
+    fn leak_fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures/security-client-server-leak")
+    }
+
+    fn run_opts(root: &Path, output: OutputFormat, fail_on_issues: bool) -> SecurityOptions<'_> {
+        SecurityOptions {
+            root,
+            config_path: &NO_CONFIG,
+            output,
+            no_cache: true,
+            threads: 1,
+            quiet: true,
+            fail_on_issues,
+            sarif_file: None,
+            summary: false,
+            changed_since: None,
+            use_shared_diff_index: false,
+            workspace: None,
+            changed_workspaces: None,
+        }
+    }
+
+    #[test]
+    fn run_is_advisory_and_exits_zero_even_with_candidates() {
+        // The rule defaults to off; the command forces it to warn, so findings on
+        // the fixture are surfaced but the exit stays 0 (advisory) by default.
+        let root = leak_fixture_root();
+        let code = run(&run_opts(&root, OutputFormat::Json, false));
+        assert_eq!(code, ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn run_with_fail_on_issues_exits_one_when_candidates_found() {
+        // The fixture has real leak candidates, so --fail-on-issues raises exit 1.
+        let root = leak_fixture_root();
+        let code = run(&run_opts(&root, OutputFormat::Human, true));
+        assert_eq!(code, ExitCode::from(1));
+    }
+
+    #[test]
+    fn run_rejects_unsupported_output_format() {
+        // Only human / json / sarif are supported; compact exits 2 before analysis.
+        let root = leak_fixture_root();
+        let code = run(&run_opts(&root, OutputFormat::Compact, false));
+        assert_eq!(code, ExitCode::from(2));
+    }
+
+    #[test]
+    fn run_summary_mode_dispatches_compact_human_renderer() {
+        let root = leak_fixture_root();
+        let opts = SecurityOptions {
+            summary: true,
+            ..run_opts(&root, OutputFormat::Human, false)
+        };
+        assert_eq!(run(&opts), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn run_sarif_format_dispatches_sarif_renderer() {
+        let root = leak_fixture_root();
+        assert_eq!(
+            run(&run_opts(&root, OutputFormat::Sarif, false)),
+            ExitCode::SUCCESS
+        );
+    }
+
+    #[test]
+    fn run_writes_sarif_sidecar_file_when_requested() {
+        let root = leak_fixture_root();
+        let dir = tempfile::tempdir().expect("tempdir");
+        let sidecar = dir.path().join("security.sarif");
+        let opts = SecurityOptions {
+            sarif_file: Some(&sidecar),
+            ..run_opts(&root, OutputFormat::Human, false)
+        };
+        assert_eq!(run(&opts), ExitCode::SUCCESS);
+        let written = std::fs::read_to_string(&sidecar).expect("sidecar SARIF written");
+        let sarif: serde_json::Value = serde_json::from_str(&written).expect("valid SARIF JSON");
+        assert_eq!(sarif["version"], "2.1.0");
+    }
+}
