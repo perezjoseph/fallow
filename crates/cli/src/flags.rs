@@ -791,3 +791,210 @@ fn print_flags_json(
         serde_json::to_string_pretty(&output).expect("JSON serialization should not fail")
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// No explicit `--config`; static so the `&Option<PathBuf>` field borrows it.
+    const NO_CONFIG: Option<PathBuf> = None;
+
+    fn flags_fixture_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/feature-flag-suppression")
+    }
+
+    fn flag(kind: FlagKind, name: &str, path: &str) -> FeatureFlag {
+        FeatureFlag {
+            path: PathBuf::from(path),
+            flag_name: name.to_owned(),
+            kind,
+            confidence: FlagConfidence::High,
+            line: 3,
+            col: 2,
+            guard_span_start: None,
+            guard_span_end: None,
+            sdk_name: None,
+            guard_line_start: None,
+            guard_line_end: None,
+            guarded_dead_exports: Vec::new(),
+        }
+    }
+
+    fn flags_opts(root: &Path, output: OutputFormat) -> FlagsOptions<'_> {
+        FlagsOptions {
+            root,
+            config_path: &NO_CONFIG,
+            output,
+            no_cache: true,
+            threads: 1,
+            quiet: true,
+            production: false,
+            workspace: None,
+            changed_workspaces: None,
+            changed_since: None,
+            explain: false,
+            top: None,
+        }
+    }
+
+    #[test]
+    fn fnv_fingerprint_is_deterministic_16_hex() {
+        let a = fnv_fingerprint(&["src/index.ts", "FEATURE_X", "3"]);
+        let b = fnv_fingerprint(&["src/index.ts", "FEATURE_X", "3"]);
+        assert_eq!(a, b);
+        assert_eq!(a.len(), 16);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+        // Per-part separation means reordering parts changes the digest.
+        assert_ne!(a, fnv_fingerprint(&["FEATURE_X", "src/index.ts", "3"]));
+    }
+
+    #[test]
+    fn escape_backticks_escapes_only_backticks() {
+        assert_eq!(escape_backticks("a`b`c"), "a\\`b\\`c");
+        assert_eq!(escape_backticks("no ticks"), "no ticks");
+    }
+
+    #[test]
+    fn kind_label_covers_all_kinds() {
+        assert_eq!(
+            kind_label(&flag(FlagKind::EnvironmentVariable, "X", "a.ts")),
+            "environment variable"
+        );
+        assert_eq!(
+            kind_label(&flag(FlagKind::SdkCall, "X", "a.ts")),
+            "SDK call"
+        );
+        assert_eq!(
+            kind_label(&flag(FlagKind::ConfigObject, "X", "a.ts")),
+            "config object"
+        );
+    }
+
+    #[test]
+    fn relative_path_strips_root_and_normalizes_separators() {
+        let root = Path::new("/proj");
+        let f = flag(FlagKind::EnvironmentVariable, "X", "/proj/src/index.ts");
+        assert_eq!(relative_path(&f, root), "src/index.ts");
+        // A path outside the root is returned as-is (normalized).
+        let outside = flag(FlagKind::EnvironmentVariable, "X", "/other/file.ts");
+        assert_eq!(relative_path(&outside, root), "/other/file.ts");
+    }
+
+    #[test]
+    fn kind_tag_labels_sdk_with_and_without_name() {
+        colored::control::set_override(false);
+        let mut sdk = flag(FlagKind::SdkCall, "X", "a.ts");
+        sdk.sdk_name = Some("LaunchDarkly".to_owned());
+        assert_eq!(kind_tag(&sdk), "(SDK: LaunchDarkly)");
+        sdk.sdk_name = None;
+        assert_eq!(kind_tag(&sdk), "(SDK)");
+        assert_eq!(
+            kind_tag(&flag(FlagKind::EnvironmentVariable, "X", "a.ts")),
+            "(env)"
+        );
+        assert_eq!(
+            kind_tag(&flag(FlagKind::ConfigObject, "X", "a.ts")),
+            "(config, heuristic)"
+        );
+    }
+
+    #[test]
+    fn run_flags_renders_every_supported_format() {
+        colored::control::set_override(false);
+        let root = flags_fixture_root();
+        for output in [
+            OutputFormat::Human,
+            OutputFormat::Json,
+            OutputFormat::Compact,
+            OutputFormat::Sarif,
+            OutputFormat::Markdown,
+            OutputFormat::CodeClimate,
+        ] {
+            assert_eq!(
+                run_flags(&flags_opts(&root, output)),
+                ExitCode::SUCCESS,
+                "format {output:?} should render and exit 0"
+            );
+        }
+    }
+
+    #[test]
+    fn run_flags_with_explain_emits_json_meta() {
+        let root = flags_fixture_root();
+        let opts = FlagsOptions {
+            explain: true,
+            ..flags_opts(&root, OutputFormat::Json)
+        };
+        assert_eq!(run_flags(&opts), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn run_flags_rejects_unsupported_format() {
+        let root = flags_fixture_root();
+        // Badge / PR-comment / review formats are not supported by `flags`.
+        assert_eq!(
+            run_flags(&flags_opts(&root, OutputFormat::Badge)),
+            ExitCode::from(2)
+        );
+    }
+
+    #[test]
+    fn run_flags_empty_default_config_surfaces_detectors_hint() {
+        colored::control::set_override(false);
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/flags-none-default");
+        // Non-quiet so the built-in detectors hint renders on an empty result.
+        let opts = FlagsOptions {
+            quiet: false,
+            ..flags_opts(&root, OutputFormat::Human)
+        };
+        assert_eq!(run_flags(&opts), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn run_flags_empty_custom_config_surfaces_terse_hint() {
+        colored::control::set_override(false);
+        let root =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/flags-none-custom");
+        let opts = FlagsOptions {
+            quiet: false,
+            ..flags_opts(&root, OutputFormat::Human)
+        };
+        assert_eq!(run_flags(&opts), ExitCode::SUCCESS);
+    }
+
+    #[test]
+    fn run_flags_renders_sdk_call_flag_across_formats() {
+        colored::control::set_override(false);
+        let dir = tempfile::tempdir().expect("temp dir");
+        let root = dir.path();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(
+            root.join("package.json"),
+            r#"{"name":"flags-sdk","main":"src/index.ts"}"#,
+        )
+        .unwrap();
+        // `variation('name', ...)` is a built-in LaunchDarkly SDK flag pattern,
+        // so the SDK-name branches of every renderer are exercised.
+        std::fs::write(
+            root.join("src/index.ts"),
+            "export function boot() {\n  if (variation('checkout-flag', false)) {\n    console.log('on');\n  }\n}\n",
+        )
+        .unwrap();
+        for output in [
+            OutputFormat::Human,
+            OutputFormat::Compact,
+            OutputFormat::Sarif,
+            OutputFormat::Markdown,
+            OutputFormat::CodeClimate,
+            OutputFormat::Json,
+        ] {
+            assert_eq!(
+                run_flags(&flags_opts(root, output)),
+                ExitCode::SUCCESS,
+                "SDK-flag render for {output:?} should exit 0"
+            );
+        }
+    }
+}
