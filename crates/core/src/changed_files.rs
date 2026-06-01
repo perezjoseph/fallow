@@ -367,6 +367,13 @@ pub fn filter_results_by_changed_files(
         .stale_suppressions
         .retain(|s| contains_normalized(&cf, &s.path));
 
+    results.security_findings.retain(|f| {
+        contains_normalized(&cf, &f.path)
+            || f.trace
+                .iter()
+                .any(|hop| contains_normalized(&cf, &hop.path))
+    });
+
     results
         .unresolved_catalog_references
         .retain(|r| contains_normalized(&cf, &r.reference.path));
@@ -487,7 +494,8 @@ mod tests {
     use super::*;
     use crate::duplicates::{CloneGroup, CloneInstance};
     use crate::results::{
-        BoundaryViolation, CircularDependency, EmptyCatalogGroup, UnusedExport, UnusedFile,
+        BoundaryViolation, CircularDependency, EmptyCatalogGroup, SecurityFinding,
+        SecurityFindingKind, TraceHop, TraceHopRole, UnusedExport, UnusedFile,
     };
     use fallow_types::output_dead_code::{
         BoundaryViolationFinding, CircularDependencyFinding, EmptyCatalogGroupFinding,
@@ -721,6 +729,40 @@ mod tests {
 
         filter_results_by_changed_files(&mut results, &changed);
         assert!(results.boundary_violations.is_empty());
+    }
+
+    #[test]
+    fn filter_results_keeps_security_finding_when_trace_file_changed() {
+        let mut results = AnalysisResults::default();
+        results.security_findings.push(SecurityFinding {
+            kind: SecurityFindingKind::ClientServerLeak,
+            path: "/project/src/client.tsx".into(),
+            line: 2,
+            col: 0,
+            evidence: "candidate".into(),
+            trace: vec![
+                TraceHop {
+                    path: "/project/src/client.tsx".into(),
+                    line: 2,
+                    col: 0,
+                    role: TraceHopRole::ClientBoundary,
+                },
+                TraceHop {
+                    path: "/project/src/server.ts".into(),
+                    line: 1,
+                    col: 0,
+                    role: TraceHopRole::SecretSource,
+                },
+            ],
+            actions: Vec::new(),
+        });
+
+        let mut changed: FxHashSet<PathBuf> = FxHashSet::default();
+        changed.insert("/project/src/server.ts".into());
+
+        filter_results_by_changed_files(&mut results, &changed);
+
+        assert_eq!(results.security_findings.len(), 1);
     }
 
     #[test]

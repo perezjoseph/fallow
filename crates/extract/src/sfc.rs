@@ -323,6 +323,7 @@ fn empty_sfc_module(file_id: FileId, source: &str, content_hash: u64) -> ModuleI
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     }
 }
 

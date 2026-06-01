@@ -79,6 +79,8 @@ pub fn filter_to_workspaces(
 
     results.stale_suppressions.retain(|s| any_under(&s.path));
 
+    results.security_findings.retain(|f| any_under(&f.path));
+
     results.unused_catalog_entries.clear();
     results.empty_catalog_groups.clear();
     results
@@ -349,6 +351,14 @@ pub fn filter_results_by_diff(
     results
         .unresolved_imports
         .retain(|i| line_in_diff(&i.import.path, i.import.line));
+    results.security_findings.retain(|f| {
+        line_in_diff(&f.path, f.line)
+            || f.trace.iter().any(|hop| {
+                line_in_diff(&hop.path, hop.line)
+                    || (matches!(hop.role, fallow_core::results::TraceHopRole::SecretSource)
+                        && touches_file(&hop.path))
+            })
+    });
 
     for unlisted in &mut results.unlisted_dependencies {
         unlisted
@@ -1805,6 +1815,46 @@ mod tests {
             1,
             "unused-catalog-entry must bypass the diff filter"
         );
+    }
+
+    #[test]
+    fn filter_by_diff_keeps_security_finding_when_secret_source_changed() {
+        let diff = build_diff(
+            "diff --git a/src/server.ts b/src/server.ts\n\
+             --- a/src/server.ts\n\
+             +++ b/src/server.ts\n\
+             @@ -8,1 +8,2 @@\n\
+              const keep = true;\n\
+             +export const db = process.env.DATABASE_URL;\n",
+        );
+        let root = Path::new("/project");
+        let mut results = AnalysisResults::default();
+        results.security_findings.push(SecurityFinding {
+            kind: SecurityFindingKind::ClientServerLeak,
+            path: PathBuf::from("/project/src/client.tsx"),
+            line: 2,
+            col: 0,
+            evidence: "candidate".into(),
+            trace: vec![
+                TraceHop {
+                    path: PathBuf::from("/project/src/client.tsx"),
+                    line: 2,
+                    col: 0,
+                    role: TraceHopRole::ClientBoundary,
+                },
+                TraceHop {
+                    path: PathBuf::from("/project/src/server.ts"),
+                    line: 1,
+                    col: 0,
+                    role: TraceHopRole::SecretSource,
+                },
+            ],
+            actions: Vec::new(),
+        });
+
+        filter_results_by_diff(&mut results, &diff, root);
+
+        assert_eq!(results.security_findings.len(), 1);
     }
 
     #[test]

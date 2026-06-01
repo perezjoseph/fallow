@@ -1791,6 +1791,7 @@ mod tests {
             namespace_object_aliases: Vec::new(),
             iconify_prefixes: Vec::new(),
             auto_import_candidates: Vec::new(),
+            directives: Vec::new(),
         };
 
         let (cyc, cog, funcs, lines) = aggregate_complexity(&module);
@@ -1827,6 +1828,7 @@ mod tests {
             namespace_object_aliases: Vec::new(),
             iconify_prefixes: Vec::new(),
             auto_import_candidates: Vec::new(),
+            directives: Vec::new(),
             line_offsets: vec![0, 10, 20, 30, 40], // 5 lines
             complexity: vec![fallow_types::extract::FunctionComplexity {
                 name: "doStuff".into(),
@@ -1874,6 +1876,7 @@ mod tests {
             namespace_object_aliases: Vec::new(),
             iconify_prefixes: Vec::new(),
             auto_import_candidates: Vec::new(),
+            directives: Vec::new(),
             line_offsets: vec![0, 10, 20], // 3 lines
             complexity: vec![
                 fallow_types::extract::FunctionComplexity {
@@ -2139,6 +2142,7 @@ mod tests {
             namespace_object_aliases: Vec::new(),
             iconify_prefixes: Vec::new(),
             auto_import_candidates: Vec::new(),
+            directives: Vec::new(),
         }
     }
 

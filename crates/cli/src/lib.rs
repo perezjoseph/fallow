@@ -138,6 +138,12 @@ mod runtime_support;
     unused_imports,
     reason = "shared CLI library compiles bin-oriented support modules for reuse"
 )]
+pub mod security;
+#[allow(
+    dead_code,
+    unused_imports,
+    reason = "shared CLI library compiles bin-oriented support modules for reuse"
+)]
 mod validate;
 mod vital_signs;
 

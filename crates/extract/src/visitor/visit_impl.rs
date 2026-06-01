@@ -1449,6 +1449,17 @@ impl ModuleInfoExtractor {
 }
 
 impl<'a> Visit<'a> for ModuleInfoExtractor {
+    fn visit_program(&mut self, program: &Program<'a>) {
+        // Capture file-level string directives (`"use client"`, `"use server"`)
+        // for the security client-server-leak detector. `directive.directive` is
+        // the cooked directive text without surrounding quotes.
+        for directive in &program.directives {
+            self.directives
+                .push(directive.directive.as_str().to_string());
+        }
+        walk::walk_program(self, program);
+    }
+
     fn visit_formal_parameter(&mut self, param: &FormalParameter<'a>) {
         if let BindingPattern::BindingIdentifier(id) = &param.pattern
             && let Some(type_annotation) = param.type_annotation.as_deref()

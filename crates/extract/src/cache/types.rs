@@ -101,7 +101,11 @@ use crate::MemberKind;
 /// now populates `auto_import_candidates` from unresolved value references.
 /// Pre-fix entries omit these candidates, so convention script auto-imports
 /// are not edge-credited until the file is re-extracted.
-pub(super) const CACHE_VERSION: u32 = 105;
+///
+/// Bumped to 106 for `fallow security`: JS/TS extraction now stores file-level
+/// directives (`"use client"`, `"use server"`) in the parse cache so client
+/// boundary detection does not depend on stale cached module info.
+pub(super) const CACHE_VERSION: u32 = 106;
 
 /// Duplication token cache version. Bump when duplicate tokenization,
 /// normalization, or the on-disk token cache schema changes.
@@ -144,7 +148,7 @@ macro_rules! assert_cached_type_size {
     };
 }
 
-assert_cached_type_size!(CachedModule, 568);
+assert_cached_type_size!(CachedModule, 592);
 assert_cached_type_size!(CachedNamespaceObjectAlias, 72);
 assert_cached_type_size!(CachedLocalTypeDeclaration, 32);
 assert_cached_type_size!(CachedPublicSignatureTypeReference, 56);
@@ -233,6 +237,10 @@ pub struct CachedModule {
     /// resolution (issue #704). Content-local, so they round-trip through the
     /// cache; resolution against the plugin table happens at graph-build time.
     pub auto_import_candidates: Vec<String>,
+    /// File-level string directives (`"use client"`, `"use server"`). Content-local,
+    /// round-trips through the cache so the security `client-server-leak` detector
+    /// sees directives on warm-cache loads.
+    pub directives: Vec<String>,
 }
 
 /// Cached namespace-object alias.

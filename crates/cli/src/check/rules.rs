@@ -549,6 +549,7 @@ mod tests {
             unresolved_catalog_references: Severity::Off,
             unused_dependency_overrides: Severity::Off,
             misconfigured_dependency_overrides: Severity::Off,
+            security_client_server_leak: Severity::Off,
         };
         let config = config_with_rules(rules);
         apply_rules(&mut results, &config);
@@ -660,6 +661,7 @@ mod tests {
             unresolved_catalog_references: Severity::Error,
             unused_dependency_overrides: Severity::Warn,
             misconfigured_dependency_overrides: Severity::Error,
+            security_client_server_leak: Severity::Off,
         };
         assert!(!has_error_severity_issues(&results, &rules, None));
     }
@@ -698,6 +700,7 @@ mod tests {
             unresolved_catalog_references: Severity::Error,
             unused_dependency_overrides: Severity::Warn,
             misconfigured_dependency_overrides: Severity::Error,
+            security_client_server_leak: Severity::Off,
         };
         assert!(!has_error_severity_issues(&results, &rules, None));
 
@@ -1025,6 +1028,7 @@ mod tests {
             unresolved_catalog_references: Severity::Error,
             unused_dependency_overrides: Severity::Warn,
             misconfigured_dependency_overrides: Severity::Error,
+            security_client_server_leak: Severity::Off,
         };
         promote_warns_to_errors(&mut rules);
 
@@ -1075,6 +1079,7 @@ mod tests {
             unresolved_catalog_references: Severity::Off,
             unused_dependency_overrides: Severity::Off,
             misconfigured_dependency_overrides: Severity::Off,
+            security_client_server_leak: Severity::Off,
         };
         promote_warns_to_errors(&mut rules);
 

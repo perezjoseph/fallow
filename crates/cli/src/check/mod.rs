@@ -10,7 +10,11 @@ use crate::load_config_for_analysis;
 use crate::regression::{self, RegressionOpts, RegressionOutcome};
 use crate::report;
 
-mod filtering;
+#[expect(
+    clippy::redundant_pub_crate,
+    reason = "reused by crate::security; check is crate-private so pub(crate) is the minimal widening that exposes filtering crate-wide"
+)]
+pub(crate) mod filtering;
 mod output;
 mod rules;
 

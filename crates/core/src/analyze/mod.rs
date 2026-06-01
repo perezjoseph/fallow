@@ -4,6 +4,7 @@ mod iconify;
 mod package_json_utils;
 mod predicates;
 mod re_export_cycles;
+mod security;
 mod unused_catalog;
 mod unused_deps;
 mod unused_exports;
@@ -817,6 +818,13 @@ pub fn find_dead_code_full(
         });
     }
 
+    if config.rules.security_client_server_leak != Severity::Off {
+        let (security_findings, stats) =
+            security::find_security_findings(graph, modules, &suppressions, &line_offsets_by_file);
+        results.security_findings = security_findings;
+        results.security_unresolved_edge_files = stats.client_files_with_unresolved_edges;
+    }
+
     if config.rules.stale_suppressions != Severity::Off {
         results
             .stale_suppressions
@@ -1072,6 +1080,7 @@ mod tests {
                 unresolved_catalog_references: Severity::Off,
                 unused_dependency_overrides: Severity::Off,
                 misconfigured_dependency_overrides: Severity::Off,
+                security_client_server_leak: Severity::Off,
             };
             let config = make_config_with_rules(rules);
             let results = find_dead_code(&graph, &config);
@@ -1291,6 +1300,7 @@ mod tests {
                 namespace_object_aliases: Vec::new(),
                 iconify_prefixes: Vec::new(),
                 auto_import_candidates: Vec::new(),
+                directives: Vec::new(),
             }];
 
             let rules = RulesConfig {

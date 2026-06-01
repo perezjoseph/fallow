@@ -45,6 +45,7 @@ pub fn kind_to_kebab(kind: IssueKind) -> &'static str {
         IssueKind::UnresolvedCatalogReference => "unresolved-catalog-reference",
         IssueKind::UnusedDependencyOverride => "unused-dependency-override",
         IssueKind::MisconfiguredDependencyOverride => "misconfigured-dependency-override",
+        IssueKind::SecurityClientServerLeak => "security-client-server-leak",
     }
 }
 
@@ -82,6 +83,7 @@ fn severity_for_kind(rules: &RulesConfig, kind: IssueKind) -> Severity {
         IssueKind::UnresolvedCatalogReference => rules.unresolved_catalog_references,
         IssueKind::UnusedDependencyOverride => rules.unused_dependency_overrides,
         IssueKind::MisconfiguredDependencyOverride => rules.misconfigured_dependency_overrides,
+        IssueKind::SecurityClientServerLeak => rules.security_client_server_leak,
         IssueKind::Complexity | IssueKind::CodeDuplication => Severity::Error,
     }
 }
@@ -491,6 +493,7 @@ mod tests {
             IssueKind::UnusedDependencyOverride,
             IssueKind::MisconfiguredDependencyOverride,
             IssueKind::ReExportCycle,
+            IssueKind::SecurityClientServerLeak,
         ] {
             assert_eq!(
                 IssueKind::from_discriminant(kind.to_discriminant()),
@@ -498,7 +501,7 @@ mod tests {
             );
         }
         assert_eq!(IssueKind::from_discriminant(0), None);
-        assert_eq!(IssueKind::from_discriminant(27), None);
+        assert_eq!(IssueKind::from_discriminant(28), None);
     }
 
     #[test]

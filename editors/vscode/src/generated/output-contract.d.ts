@@ -25,7 +25,7 @@
 
 
 /**
- * Schemas for the JSON output of fallow commands. Object-shaped envelopes covered by the `FallowOutput` contract carry a top-level `kind` discriminator (for example `dead-code`, `dead-code-grouped`, `health`, `dupes`, `combined`, `audit`, `explain`, `impact`, `coverage-setup`, `coverage-analyze`, `list-boundaries`, `review-envelope`, and `review-reconcile`). Consumers should branch on `kind` instead of probing for unique field presence. `--legacy-envelope` removes only the document-root `kind` for one compatibility cycle. `CodeClimateOutput` is a bare JSON array (per the Code Climate / GitLab Code Quality spec) and stays a sibling root branch discriminated by checking whether the document root is an array.
+ * Schemas for the JSON output of fallow commands. Object-shaped envelopes covered by the `FallowOutput` contract carry a top-level `kind` discriminator (for example `dead-code`, `dead-code-grouped`, `health`, `dupes`, `combined`, `audit`, `explain`, `impact`, `security`, `coverage-setup`, `coverage-analyze`, `list-boundaries`, `review-envelope`, and `review-reconcile`). Consumers should branch on `kind` instead of probing for unique field presence. `--legacy-envelope` removes only the document-root `kind` for one compatibility cycle. `CodeClimateOutput` is a bare JSON array (per the Code Climate / GitLab Code Quality spec) and stays a sibling root branch discriminated by checking whether the document root is an array.
  */
 export type FallowJsonOutput = (FallowOutput | CodeClimateOutput)
 /**
@@ -69,6 +69,8 @@ kind: "dupes"
 kind: "dead-code-grouped"
 }) | (ImpactReport & {
 kind: "impact"
+}) | (SecurityOutput & {
+kind: "security"
 }) | (CheckOutput & {
 kind: "dead-code"
 }) | (CombinedOutput & {
@@ -580,6 +582,20 @@ export type ImpactReportSchemaVersion = "1"
  * Direction of a count trend between two recorded runs.
  */
 export type ImpactTrendDirection = ("improving" | "declining" | "stable")
+/**
+ * The `fallow security --format json` schema version. Independently versioned
+ * from the main contract, mirroring `ImpactReportSchemaVersion`.
+ */
+export type SecuritySchemaVersion = "1"
+/**
+ * The kind of security candidate. Findings are CANDIDATES for downstream agent
+ * verification, NOT verified vulnerabilities.
+ */
+export type SecurityFindingKind = "client-server-leak"
+/**
+ * The role a hop plays in a security finding's structural import trace.
+ */
+export type TraceHopRole = ("client-boundary" | "intermediate" | "secret-source")
 /**
  * Discriminator value for [`CodeClimateIssue::kind`].
  */
@@ -4678,6 +4694,86 @@ path: string
 symbol?: (string | null)
 git_sha?: (string | null)
 timestamp: string
+}
+/**
+ * The `fallow security --format json` envelope. `security_findings` is the
+ * unique required field used for untagged narrowing in `FallowOutput`.
+ */
+export interface SecurityOutput {
+schema_version: SecuritySchemaVersion
+/**
+ * Security candidates. Paths are project-root-relative, forward-slash.
+ */
+security_findings: SecurityFinding[]
+/**
+ * In-band blind spot: number of `"use client"` files whose transitive
+ * import cone contains a dynamic `import()` the reachability BFS could not
+ * follow. A leak hidden behind such an edge would not be reported, so a
+ * zero finding count with a non-zero value here is NOT a clean bill.
+ */
+unresolved_edge_files: number
+}
+/**
+ * A local security CANDIDATE for downstream agent verification, NOT a verified
+ * vulnerability. Emitted only by `fallow security`, never under bare `fallow`
+ * or the `audit` gate. There is deliberately no `confidence` or
+ * `signal_strength` field: fallow does not prove exploitability, so the trace
+ * (its hops and length) is the only honest signal.
+ */
+export interface SecurityFinding {
+kind: SecurityFindingKind
+/**
+ * File the finding is anchored on (the client boundary). Absolute
+ * internally; JSON strips the project root via `serde_path::serialize`.
+ */
+path: string
+/**
+ * 1-based line number of the anchor.
+ */
+line: number
+/**
+ * 0-based byte column offset of the anchor.
+ */
+col: number
+/**
+ * Agent/human-readable evidence (e.g. the named env var the chain reaches).
+ */
+evidence: string
+/**
+ * Structural import-hop trace from the client boundary to the secret source.
+ * The hop count is the uncalibrated signal; fallow does not prove the path
+ * is exploitable.
+ */
+trace: TraceHop[]
+/**
+ * Machine-actionable next steps. Always emitted (possibly empty for
+ * forward-compat). For security candidates this is a single file-level
+ * suppress hint (`auto_fixable: false`); there is no auto-fix because
+ * verification is the agent's job, not fallow's.
+ */
+actions: IssueAction[]
+}
+/**
+ * One hop in a security finding's structural trace. Stored as an absolute path
+ * internally; JSON serialization strips the project root via
+ * `serde_path::serialize`.
+ */
+export interface TraceHop {
+/**
+ * File on this hop of the import chain.
+ */
+path: string
+/**
+ * 1-based line number. Import-chain hops point at the import site; the
+ * terminal secret-source hop points at the source module when extraction
+ * does not carry a more precise member-access span.
+ */
+line: number
+/**
+ * 0-based byte column offset.
+ */
+col: number
+role: TraceHopRole
 }
 /**
  * Bare `fallow --format json` envelope.

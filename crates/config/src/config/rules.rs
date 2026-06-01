@@ -124,6 +124,11 @@ pub struct RulesConfig {
     pub unused_dependency_overrides: Severity,
     #[serde(default, alias = "misconfigured-dependency-override")]
     pub misconfigured_dependency_overrides: Severity,
+    /// Opt-in (default off): a `"use client"` file that transitively imports a
+    /// module reading a non-public `process.env` secret. Surfaced only by
+    /// `fallow security`; never under bare `fallow` or the `audit` gate.
+    #[serde(default = "Severity::default_off")]
+    pub security_client_server_leak: Severity,
 }
 
 impl Default for RulesConfig {
@@ -154,6 +159,7 @@ impl Default for RulesConfig {
             unresolved_catalog_references: Severity::Error,
             unused_dependency_overrides: Severity::Warn,
             misconfigured_dependency_overrides: Severity::Error,
+            security_client_server_leak: Severity::Off,
         }
     }
 }
@@ -235,6 +241,9 @@ impl RulesConfig {
         }
         if let Some(s) = partial.misconfigured_dependency_overrides {
             self.misconfigured_dependency_overrides = s;
+        }
+        if let Some(s) = partial.security_client_server_leak {
+            self.security_client_server_leak = s;
         }
     }
 }
@@ -395,6 +404,8 @@ pub struct PartialRulesConfig {
         skip_serializing_if = "Option::is_none"
     )]
     pub misconfigured_dependency_overrides: Option<Severity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security_client_server_leak: Option<Severity>,
 }
 
 /// Every rule name accepted by `RulesConfig` deserialization, in kebab-case.
@@ -433,6 +444,7 @@ pub const KNOWN_RULE_NAMES: &[&str] = &[
     "unresolved-catalog-references",
     "unused-dependency-overrides",
     "misconfigured-dependency-overrides",
+    "security-client-server-leak",
     "unused-file",
     "unused-export",
     "unused-type",
@@ -749,6 +761,7 @@ mod tests {
             unresolved_catalog_references: Some(Severity::Off),
             unused_dependency_overrides: Some(Severity::Off),
             misconfigured_dependency_overrides: Some(Severity::Off),
+            security_client_server_leak: Some(Severity::Off),
         };
         rules.apply_partial(&partial);
         assert_eq!(rules.unused_files, Severity::Off);
@@ -790,7 +803,7 @@ mod tests {
 
     #[test]
     fn known_rule_names_count_matches_struct() {
-        assert_eq!(KNOWN_RULE_NAMES.len(), 52);
+        assert_eq!(KNOWN_RULE_NAMES.len(), 53);
     }
 
     #[test]

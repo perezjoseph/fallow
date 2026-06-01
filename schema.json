@@ -167,7 +167,8 @@
         "empty-catalog-groups": "warn",
         "unresolved-catalog-references": "error",
         "unused-dependency-overrides": "warn",
-        "misconfigured-dependency-overrides": "error"
+        "misconfigured-dependency-overrides": "error",
+        "security-client-server-leak": "off"
       }
     },
     "boundaries": {
@@ -976,6 +977,11 @@
         "misconfigured-dependency-overrides": {
           "$ref": "#/$defs/Severity",
           "default": "error"
+        },
+        "security-client-server-leak": {
+          "description": "Opt-in (default off): a `\"use client\"` file that transitively imports a\nmodule reading a non-public `process.env` secret. Surfaced only by\n`fallow security`; never under bare `fallow` or the `audit` gate.",
+          "$ref": "#/$defs/Severity",
+          "default": "off"
         }
       }
     },
@@ -1504,6 +1510,16 @@
           ]
         },
         "misconfigured-dependency-overrides": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Severity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "security-client-server-leak": {
           "anyOf": [
             {
               "$ref": "#/$defs/Severity"

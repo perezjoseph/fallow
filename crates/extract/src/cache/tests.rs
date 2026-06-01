@@ -54,6 +54,7 @@ fn cache_store_insert_and_get() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
     assert_eq!(store.len(), 1);
@@ -93,6 +94,7 @@ fn cache_store_hash_mismatch_returns_none() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
     assert!(store.get(Path::new("test.ts"), 99).is_none());
@@ -136,6 +138,7 @@ fn cache_store_overwrite_entry() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     let m2 = CachedModule {
         content_hash: 2,
@@ -166,6 +169,7 @@ fn cache_store_overwrite_entry() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), m1);
     store.insert(Path::new("test.ts"), m2);
@@ -212,6 +216,7 @@ fn module_to_cached_roundtrip_named_export() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: vec!["jam".to_string(), "ic".to_string()],
         auto_import_candidates: vec!["Card001".to_string(), "BaseButton".to_string()],
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -274,6 +279,7 @@ fn module_to_cached_roundtrip_side_effect_used_export() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -325,6 +331,7 @@ fn module_to_cached_roundtrip_default_export() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -399,6 +406,7 @@ fn module_to_cached_roundtrip_imports() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -457,6 +465,7 @@ fn module_to_cached_roundtrip_re_exports() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -512,6 +521,7 @@ fn module_to_cached_roundtrip_dynamic_imports() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -597,6 +607,7 @@ fn module_to_cached_roundtrip_members() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -661,6 +672,7 @@ fn cache_save_and_load_roundtrip() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
     store.save(&dir, 0, DEFAULT_CACHE_MAX_SIZE).unwrap();
@@ -711,6 +723,7 @@ fn cache_version_mismatch_returns_none() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
     store.save(&dir, 0, DEFAULT_CACHE_MAX_SIZE).unwrap();
@@ -766,6 +779,7 @@ fn module_to_cached_roundtrip_type_only_import() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -808,6 +822,7 @@ fn get_by_path_only_returns_entry_regardless_of_hash() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
 
@@ -861,6 +876,7 @@ fn retain_paths_removes_stale_entries() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     store.insert(Path::new("/project/a.ts"), m());
@@ -920,6 +936,7 @@ fn retain_paths_with_empty_files_clears_cache() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("a.ts"), m);
     assert_eq!(store.len(), 1);
@@ -960,6 +977,7 @@ fn get_by_metadata_returns_entry_on_match() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
 
@@ -1000,6 +1018,7 @@ fn get_by_metadata_returns_none_on_mtime_mismatch() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
 
@@ -1042,6 +1061,7 @@ fn get_by_metadata_returns_none_on_size_mismatch() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
 
@@ -1084,6 +1104,7 @@ fn get_by_metadata_returns_none_for_zero_mtime() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     store.insert(Path::new("test.ts"), module);
 
@@ -1133,6 +1154,7 @@ fn module_to_cached_stores_mtime_and_size() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 12345, 6789);
@@ -1170,6 +1192,7 @@ fn module_to_cached_roundtrip_line_offsets() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
     let cached = module_to_cached(&module, 0, 0);
     let restored = cached_to_module(&cached, FileId(0));
@@ -1223,6 +1246,7 @@ fn module_to_cached_roundtrip_suppressions_with_kinds() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1279,6 +1303,7 @@ fn module_to_cached_roundtrip_unknown_suppression_kinds() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1334,6 +1359,7 @@ fn module_to_cached_roundtrip_visibility() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1380,6 +1406,7 @@ fn module_to_cached_roundtrip_visibility_internal() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1426,6 +1453,7 @@ fn module_to_cached_roundtrip_visibility_beta() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1472,6 +1500,7 @@ fn module_to_cached_roundtrip_visibility_alpha() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1520,6 +1549,7 @@ fn module_to_cached_roundtrip_dynamic_import_patterns() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1566,6 +1596,7 @@ fn module_to_cached_roundtrip_unused_import_bindings() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1637,6 +1668,7 @@ fn module_to_cached_roundtrip_complexity() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1686,6 +1718,7 @@ fn module_to_cached_roundtrip_require_with_destructured() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1735,6 +1768,7 @@ fn module_to_cached_roundtrip_dynamic_import_with_local() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1783,6 +1817,7 @@ fn module_to_cached_roundtrip_source_span() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1838,6 +1873,7 @@ fn module_to_cached_roundtrip_member_decorators() {
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     };
 
     let cached = module_to_cached(&module, 0, 0);
@@ -1882,6 +1918,7 @@ fn synthetic_module(content_hash: u64, last_access_secs: u64, payload_kb: usize)
         namespace_object_aliases: Vec::new(),
         iconify_prefixes: Vec::new(),
         auto_import_candidates: Vec::new(),
+        directives: Vec::new(),
     }
 }
 

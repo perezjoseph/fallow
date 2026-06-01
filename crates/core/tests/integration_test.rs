@@ -94,6 +94,8 @@ mod private_type_leaks;
 mod production_mode;
 #[path = "integration_test/re_export_chains.rs"]
 mod re_export_chains;
+#[path = "integration_test/security_client_server_leak.rs"]
+mod security_client_server_leak;
 #[path = "integration_test/stale_suppressions.rs"]
 mod stale_suppressions;
 #[path = "integration_test/suppression_comments.rs"]

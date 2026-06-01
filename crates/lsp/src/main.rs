@@ -1951,6 +1951,16 @@ mod tests {
                 total: 0,
                 by_source: vec![],
             }),
+            security_findings: vec![fallow_core::results::SecurityFinding {
+                kind: fallow_core::results::SecurityFindingKind::ClientServerLeak,
+                path: "/client.tsx".into(),
+                line: 1,
+                col: 0,
+                evidence: "transitively reaches DATABASE_URL".to_string(),
+                trace: vec![],
+                actions: vec![],
+            }],
+            security_unresolved_edge_files: 2,
         }
     }
 
@@ -1986,6 +1996,8 @@ mod tests {
         assert_eq!(target.misconfigured_dependency_overrides.len(), 1);
         assert_eq!(target.export_usages.len(), 1);
         assert_eq!(target.feature_flags.len(), 1);
+        assert_eq!(target.security_findings.len(), 1);
+        assert_eq!(target.security_unresolved_edge_files, 2);
         assert_eq!(target.suppression_count, 1);
         assert!(target.entry_point_summary.is_some());
     }

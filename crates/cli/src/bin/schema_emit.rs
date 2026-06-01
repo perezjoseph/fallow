@@ -58,6 +58,7 @@ use fallow_cli::output_envelope::{
 use fallow_cli::report::dupes_grouping::{
     AttributedCloneGroup, AttributedInstance, DuplicationGroup,
 };
+use fallow_cli::security::{SecurityOutput, SecuritySchemaVersion};
 use fallow_config::{AuthoredRule, LogicalGroup, LogicalGroupStatus};
 use fallow_core::duplicates::{
     CloneFamily, CloneGroup, CloneInstance, DuplicationReport, DuplicationStats, MirroredDirectory,
@@ -91,9 +92,10 @@ use fallow_types::results::{
     DependencyOverrideMisconfigReason, DependencyOverrideSource, DuplicateExport,
     DuplicateLocation, EmptyCatalogGroup, EntryPointSummary, ExportUsage, FeatureFlag,
     FlagConfidence, FlagKind, ImportSite, MisconfiguredDependencyOverride, PrivateTypeLeak,
-    ReferenceLocation, StaleSuppression, SuppressionOrigin, TestOnlyDependency, TypeOnlyDependency,
-    UnlistedDependency, UnresolvedCatalogReference, UnresolvedImport, UnusedCatalogEntry,
-    UnusedDependency, UnusedDependencyOverride, UnusedExport, UnusedFile, UnusedMember,
+    ReferenceLocation, SecurityFinding, SecurityFindingKind, StaleSuppression, SuppressionOrigin,
+    TestOnlyDependency, TraceHop, TraceHopRole, TypeOnlyDependency, UnlistedDependency,
+    UnresolvedCatalogReference, UnresolvedImport, UnusedCatalogEntry, UnusedDependency,
+    UnusedDependencyOverride, UnusedExport, UnusedFile, UnusedMember,
 };
 
 /// Workspace-relative path to the committed schema.
@@ -300,6 +302,12 @@ pub(crate) fn derived_definition_names() -> &'static [&'static str] {
         "ImpactTrendDirection",
         "ResolutionEvent",
         "TrendSummary",
+        "SecurityOutput",
+        "SecuritySchemaVersion",
+        "SecurityFinding",
+        "SecurityFindingKind",
+        "TraceHop",
+        "TraceHopRole",
     ]
 }
 
@@ -483,6 +491,13 @@ fn derived_definitions() -> Map<String, Value> {
     let _ = generator.subschema_for::<ContainmentEvent>();
     let _ = generator.subschema_for::<ImpactReport>();
 
+    let _ = generator.subschema_for::<SecurityFindingKind>();
+    let _ = generator.subschema_for::<TraceHopRole>();
+    let _ = generator.subschema_for::<TraceHop>();
+    let _ = generator.subschema_for::<SecurityFinding>();
+    let _ = generator.subschema_for::<SecuritySchemaVersion>();
+    let _ = generator.subschema_for::<SecurityOutput>();
+
     let _ = generator.subschema_for::<FallowOutput>();
 
     register_list_boundaries_definitions(&mut generator);
@@ -665,6 +680,11 @@ fn rewrite_fallow_output_definition(definitions: &mut Map<String, Value>) -> Res
             "`fallow impact --format json`. Required `enabled`, `record_count`,\n`containment_count`, `recent_containment`; no global `schema_version`,\n`command`, `total_issues`, or `report`.",
         ),
         (
+            "security",
+            "SecurityOutput",
+            "`fallow security --format json`. Required `security_findings` plus\n`unresolved_edge_files`; findings are unverified security candidates.",
+        ),
+        (
             "dead-code",
             "CheckOutput",
             "`fallow dead-code --format json`.\nRequired `total_issues` plus `summary: CheckSummary`.",
@@ -729,7 +749,7 @@ fn rewrite_document_root_one_of(document: &mut Value) -> Result<(), String> {
              envelopes covered by the `FallowOutput` contract carry a top-level \
              `kind` discriminator (for example `dead-code`, `dead-code-grouped`, \
              `health`, `dupes`, `combined`, `audit`, `explain`, `impact`, \
-             `coverage-setup`, `coverage-analyze`, `list-boundaries`, \
+             `security`, `coverage-setup`, `coverage-analyze`, `list-boundaries`, \
              `review-envelope`, and `review-reconcile`). Consumers should branch on `kind` instead of \
              probing for unique field presence. `--legacy-envelope` removes \
              only the document-root `kind` for one compatibility cycle. \
@@ -977,6 +997,7 @@ mod drift_tests {
             ("Dupes", "DupesOutput"),
             ("CheckGrouped", "CheckGroupedOutput"),
             ("Impact", "ImpactReport"),
+            ("Security", "SecurityOutput"),
             ("Check", "CheckOutput"),
             ("Combined", "CombinedOutput"),
         ];
@@ -998,6 +1019,7 @@ mod drift_tests {
                 FallowOutput::Dupes(_) => "Dupes",
                 FallowOutput::CheckGrouped(_) => "CheckGrouped",
                 FallowOutput::Impact(_) => "Impact",
+                FallowOutput::Security(_) => "Security",
                 FallowOutput::Check(_) => "Check",
                 FallowOutput::Combined(_) => "Combined",
             }

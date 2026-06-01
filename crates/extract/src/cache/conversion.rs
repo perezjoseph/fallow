@@ -243,6 +243,7 @@ pub fn cached_to_module_opts(
             .collect(),
         iconify_prefixes: cached.iconify_prefixes.clone(),
         auto_import_candidates: cached.auto_import_candidates.clone(),
+        directives: cached.directives.clone(),
     }
 }
 
@@ -428,5 +429,6 @@ pub fn module_to_cached(
             .collect(),
         iconify_prefixes: module.iconify_prefixes.clone(),
         auto_import_candidates: module.auto_import_candidates.clone(),
+        directives: module.directives.clone(),
     }
 }

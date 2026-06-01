@@ -48,6 +48,7 @@ mod regression;
 mod report;
 mod runtime_support;
 mod schema;
+mod security;
 mod setup_hooks;
 mod signal;
 mod telemetry;
@@ -72,6 +73,7 @@ Analysis:
   dupes          Find copy-paste and structural code duplication
   health         Analyze complexity, maintainability, hotspots, and coverage gaps
   flags          Detect feature flag usage patterns
+  security       Surface local security candidates for agent verification (opt-in)
   audit          Review changed files for dead code, complexity, and duplication
 
 Workflow:
@@ -902,6 +904,19 @@ enum Command {
         #[command(subcommand)]
         subcommand: Option<ImpactCli>,
     },
+
+    /// Surface local security candidates for downstream agent verification (opt-in).
+    ///
+    /// Ships one graph-structural rule, `client-server-leak`: a `"use client"`
+    /// file that transitively imports a module reading a non-public `process.env`
+    /// secret. Findings are CANDIDATES for verification, NOT verified
+    /// vulnerabilities. This command is the only surface for security findings;
+    /// they never appear under bare `fallow` or the `audit` gate. The
+    /// `import.meta.env` (Vite) secret convention is out of scope (blind spot).
+    /// Honors `--root`, `--format {human,json,sarif}`, `--changed-since`,
+    /// `--diff-file`, `--diff-stdin`, `--workspace`, `--changed-workspaces`,
+    /// `--ci`, `--fail-on-issues`, `--sarif-file`, and `--summary`.
+    Security,
 
     /// Dump the CLI interface as machine-readable JSON for agent introspection
     Schema,
@@ -1751,6 +1766,16 @@ fn validate_inputs(
     cli: &Cli,
     output: fallow_config::OutputFormat,
 ) -> Result<(PathBuf, usize), ExitCode> {
+    if matches!(&cli.command, Some(Command::Security))
+        && let Some(flag) = unsupported_security_global(cli)
+    {
+        return Err(emit_error(
+            &format!("{flag} is not valid with `fallow security`."),
+            2,
+            output,
+        ));
+    }
+
     if let Some(ref config_path) = cli.config
         && let Some(s) = config_path.to_str()
         && let Err(e) = validate::validate_no_control_chars(s, "--config")
@@ -1830,6 +1855,38 @@ fn validate_inputs(
     rayon_pool::configure_global_pool(threads);
 
     Ok((root, threads))
+}
+
+fn unsupported_security_global(cli: &Cli) -> Option<&'static str> {
+    if cli.baseline.is_some() {
+        Some("--baseline")
+    } else if cli.save_baseline.is_some() {
+        Some("--save-baseline")
+    } else if cli.production {
+        Some("--production")
+    } else if cli.group_by.is_some() {
+        Some("--group-by")
+    } else if cli.performance {
+        Some("--performance")
+    } else if cli.explain {
+        Some("--explain")
+    } else if cli.explain_skipped {
+        Some("--explain-skipped")
+    } else if cli.fail_on_regression {
+        Some("--fail-on-regression")
+    } else if cli.regression_baseline.is_some() {
+        Some("--regression-baseline")
+    } else if cli.save_regression_baseline.is_some() {
+        Some("--save-regression-baseline")
+    } else if cli.dupes_mode.is_some() {
+        Some("--dupes-mode")
+    } else if cli.dupes_threshold.is_some() {
+        Some("--dupes-threshold")
+    } else if cli.include_entry_exports {
+        Some("--include-entry-exports")
+    } else {
+        None
+    }
 }
 
 /// Apply CI defaults: if `--ci` is set, override format to SARIF (unless explicit),
@@ -2224,7 +2281,7 @@ fn main() -> ExitCode {
         )
     {
         return emit_error(
-            "--ci, --fail-on-issues, and --sarif-file are only valid with dead-code, dupes, health, or bare invocation",
+            "--ci, --fail-on-issues, and --sarif-file are only valid with dead-code, dupes, health, security, or bare invocation",
             2,
             output,
         );
@@ -2859,6 +2916,24 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
                 ExitCode::SUCCESS
             }
         },
+        Command::Security => {
+            let (output, quiet, fail_on_issues) = dispatch.ci_defaults();
+            security::run(&security::SecurityOptions {
+                root,
+                config_path: &cli.config,
+                output,
+                no_cache: cli.no_cache,
+                threads,
+                quiet,
+                fail_on_issues,
+                sarif_file: cli.sarif_file.as_deref(),
+                summary: cli.summary,
+                changed_since: cli.changed_since.as_deref(),
+                use_shared_diff_index: true,
+                workspace: cli.workspace.as_deref(),
+                changed_workspaces: cli.changed_workspaces.as_deref(),
+            })
+        }
         Command::Schema => unreachable!("handled above"),
         Command::Migrate {
             toml,
@@ -2933,7 +3008,8 @@ fn telemetry_workflow_for_command(
             | Command::License { .. }
             | Command::Telemetry { .. }
             | Command::SetupHooks { .. }
-            | Command::Impact { .. },
+            | Command::Impact { .. }
+            | Command::Security,
         ) => telemetry::Workflow::Unknown,
     }
 }
@@ -3515,6 +3591,7 @@ mod tests {
             "  dupes",
             "  health",
             "  flags",
+            "  security",
             "  audit",
             "Workflow:",
             "  watch",

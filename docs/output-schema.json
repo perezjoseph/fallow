@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Fallow JSON Output Schemas",
-  "description": "Schemas for the JSON output of fallow commands. Object-shaped envelopes covered by the `FallowOutput` contract carry a top-level `kind` discriminator (for example `dead-code`, `dead-code-grouped`, `health`, `dupes`, `combined`, `audit`, `explain`, `impact`, `coverage-setup`, `coverage-analyze`, `list-boundaries`, `review-envelope`, and `review-reconcile`). Consumers should branch on `kind` instead of probing for unique field presence. `--legacy-envelope` removes only the document-root `kind` for one compatibility cycle. `CodeClimateOutput` is a bare JSON array (per the Code Climate / GitLab Code Quality spec) and stays a sibling root branch discriminated by checking whether the document root is an array.",
+  "description": "Schemas for the JSON output of fallow commands. Object-shaped envelopes covered by the `FallowOutput` contract carry a top-level `kind` discriminator (for example `dead-code`, `dead-code-grouped`, `health`, `dupes`, `combined`, `audit`, `explain`, `impact`, `security`, `coverage-setup`, `coverage-analyze`, `list-boundaries`, `review-envelope`, and `review-reconcile`). Consumers should branch on `kind` instead of probing for unique field presence. `--legacy-envelope` removes only the document-root `kind` for one compatibility cycle. `CodeClimateOutput` is a bare JSON array (per the Code Climate / GitLab Code Quality spec) and stays a sibling root branch discriminated by checking whether the document root is an array.",
   "oneOf": [
     {
       "$ref": "#/definitions/FallowOutput"
@@ -7246,6 +7246,26 @@
           ]
         },
         {
+          "description": "`fallow security --format json`. Required `security_findings` plus\n`unresolved_edge_files`; findings are unverified security candidates.",
+          "allOf": [
+            {
+              "$ref": "#/definitions/SecurityOutput"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "security"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            }
+          ]
+        },
+        {
           "description": "`fallow dead-code --format json`.\nRequired `total_issues` plus `summary: CheckSummary`.",
           "allOf": [
             {
@@ -9751,6 +9771,149 @@
         "mixed"
       ],
       "description": "Whether CRAP findings in the report used one coverage-source kind or a mix."
+    },
+    "SecurityOutput": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "description": "Schema version of this envelope.",
+          "$ref": "#/definitions/SecuritySchemaVersion"
+        },
+        "security_findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/SecurityFinding"
+          },
+          "description": "Security candidates. Paths are project-root-relative, forward-slash."
+        },
+        "unresolved_edge_files": {
+          "type": "integer",
+          "description": "In-band blind spot: number of `\"use client\"` files whose transitive\nimport cone contains a dynamic `import()` the reachability BFS could not\nfollow. A leak hidden behind such an edge would not be reported, so a\nzero finding count with a non-zero value here is NOT a clean bill."
+        }
+      },
+      "required": [
+        "schema_version",
+        "security_findings",
+        "unresolved_edge_files"
+      ],
+      "description": "The `fallow security --format json` envelope. `security_findings` is the\nunique required field used for untagged narrowing in `FallowOutput`."
+    },
+    "SecuritySchemaVersion": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "1",
+          "description": "First release of the `fallow security --format json` shape."
+        }
+      ],
+      "description": "The `fallow security --format json` schema version. Independently versioned\nfrom the main contract, mirroring `ImpactReportSchemaVersion`."
+    },
+    "SecurityFinding": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "The rule that produced this candidate.",
+          "$ref": "#/definitions/SecurityFindingKind"
+        },
+        "path": {
+          "type": "string",
+          "description": "File the finding is anchored on (the client boundary). Absolute\ninternally; JSON strips the project root via `serde_path::serialize`."
+        },
+        "line": {
+          "type": "integer",
+          "description": "1-based line number of the anchor."
+        },
+        "col": {
+          "type": "integer",
+          "description": "0-based byte column offset of the anchor."
+        },
+        "evidence": {
+          "type": "string",
+          "description": "Agent/human-readable evidence (e.g. the named env var the chain reaches)."
+        },
+        "trace": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/TraceHop"
+          },
+          "description": "Structural import-hop trace from the client boundary to the secret source.\nThe hop count is the uncalibrated signal; fallow does not prove the path\nis exploitable."
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/IssueAction"
+          },
+          "description": "Machine-actionable next steps. Always emitted (possibly empty for\nforward-compat). For security candidates this is a single file-level\nsuppress hint (`auto_fixable: false`); there is no auto-fix because\nverification is the agent's job, not fallow's."
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "line",
+        "col",
+        "evidence",
+        "trace",
+        "actions"
+      ],
+      "description": "A local security CANDIDATE for downstream agent verification, NOT a verified\nvulnerability. Emitted only by `fallow security`, never under bare `fallow`\nor the `audit` gate. There is deliberately no `confidence` or\n`signal_strength` field: fallow does not prove exploitability, so the trace\n(its hops and length) is the only honest signal."
+    },
+    "SecurityFindingKind": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "client-server-leak",
+          "description": "A `\"use client\"` file transitively imports a module that reads a\nnon-public `process.env` secret."
+        }
+      ],
+      "description": "The kind of security candidate. Findings are CANDIDATES for downstream agent\nverification, NOT verified vulnerabilities."
+    },
+    "TraceHop": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "File on this hop of the import chain."
+        },
+        "line": {
+          "type": "integer",
+          "description": "1-based line number. Import-chain hops point at the import site; the\nterminal secret-source hop points at the source module when extraction\ndoes not carry a more precise member-access span."
+        },
+        "col": {
+          "type": "integer",
+          "description": "0-based byte column offset."
+        },
+        "role": {
+          "description": "Role of this hop in the chain.",
+          "$ref": "#/definitions/TraceHopRole"
+        }
+      },
+      "required": [
+        "path",
+        "line",
+        "col",
+        "role"
+      ],
+      "description": "One hop in a security finding's structural trace. Stored as an absolute path\ninternally; JSON serialization strips the project root via\n`serde_path::serialize`."
+    },
+    "TraceHopRole": {
+      "oneOf": [
+        {
+          "type": "string",
+          "const": "client-boundary",
+          "description": "The `\"use client\"` boundary file the finding is anchored on."
+        },
+        {
+          "type": "string",
+          "const": "intermediate",
+          "description": "An intermediate module on the transitive import path."
+        },
+        {
+          "type": "string",
+          "const": "secret-source",
+          "description": "The module that reads the secret."
+        }
+      ],
+      "description": "The role a hop plays in a security finding's structural import trace."
     }
   }
 }

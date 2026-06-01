@@ -128,6 +128,10 @@ pub(crate) struct ModuleInfoExtractor {
     pub(crate) class_type_param_constraints: Vec<FxHashMap<String, Option<String>>>,
     pub(crate) pending_playwright_factory_calls: Vec<PendingPlaywrightFactory>,
     pub(crate) pending_playwright_factory_aliases: Vec<(String, String)>,
+    /// File-level string directives (`"use client"`, `"use server"`) captured
+    /// from `Program::directives`. Consumed by the security `client-server-leak`
+    /// detector to identify React Server Component client boundaries.
+    pub(crate) directives: Vec<String>,
 }
 
 impl ModuleInfoExtractor {
@@ -716,6 +720,7 @@ impl ModuleInfoExtractor {
             namespace_object_aliases,
             iconify_prefixes: Vec::new(),
             auto_import_candidates: Vec::new(),
+            directives: self.directives,
         }
     }
 
@@ -756,6 +761,7 @@ impl ModuleInfoExtractor {
             .extend(self.public_signature_type_references);
         info.namespace_object_aliases
             .extend(namespace_object_aliases);
+        info.directives.extend(self.directives);
     }
 }
 

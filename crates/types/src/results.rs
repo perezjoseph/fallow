@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::extract::MemberKind;
+use crate::output::IssueAction;
 use crate::output_dead_code::{
     BoundaryViolationFinding, CircularDependencyFinding, DuplicateExportFinding,
     EmptyCatalogGroupFinding, MisconfiguredDependencyOverrideFinding, PrivateTypeLeakFinding,
@@ -187,6 +188,22 @@ pub struct AnalysisResults {
     /// Skipped during default serialization: injected separately in JSON output when enabled.
     #[serde(skip)]
     pub feature_flags: Vec<FeatureFlag>,
+    /// Local security candidates (e.g. `client-server-leak`). CANDIDATES for
+    /// downstream agent verification, NOT verified vulnerabilities. Off by
+    /// default; populated only when the corresponding `security_*` rule is
+    /// enabled (forced on by `fallow security`). Excluded from `total_issues`
+    /// and skipped during serialization so they never surface under bare
+    /// `fallow` or the `audit` gate; the `fallow security` command reads this
+    /// field and emits its own envelope. Mirrors [`Self::feature_flags`].
+    #[serde(skip)]
+    pub security_findings: Vec<SecurityFinding>,
+    /// In-band blind-spot count: number of `"use client"` files whose transitive
+    /// import cone contains a dynamic `import()` the reachability BFS cannot
+    /// follow. Surfaced by `fallow security` so a leak hidden behind an
+    /// unresolved edge is never silently reported as "clean". Skipped during
+    /// serialization like [`Self::security_findings`].
+    #[serde(skip)]
+    pub security_unresolved_edge_files: usize,
     /// Usage counts for all exports across the project. Used by the LSP for Code Lens.
     /// Not included in issue counts -- this is metadata, not an issue type.
     /// Skipped during serialization: this is internal LSP data, not part of the JSON output schema.
@@ -303,6 +320,8 @@ impl AnalysisResults {
             suppression_count,
             active_suppressions,
             feature_flags,
+            security_findings,
+            security_unresolved_edge_files,
             export_usages,
             entry_point_summary,
         } = other;
@@ -335,6 +354,8 @@ impl AnalysisResults {
         self.misconfigured_dependency_overrides
             .extend(misconfigured_dependency_overrides);
         self.feature_flags.extend(feature_flags);
+        self.security_findings.extend(security_findings);
+        self.security_unresolved_edge_files += security_unresolved_edge_files;
         self.export_usages.extend(export_usages);
         self.active_suppressions.extend(active_suppressions);
         self.suppression_count += suppression_count;
@@ -782,6 +803,80 @@ pub struct TypeOnlyDependency {
     pub path: PathBuf,
     /// 1-based line number of the dependency entry in package.json.
     pub line: u32,
+}
+
+/// The kind of security candidate. Findings are CANDIDATES for downstream agent
+/// verification, NOT verified vulnerabilities.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum SecurityFindingKind {
+    /// A `"use client"` file transitively imports a module that reads a
+    /// non-public `process.env` secret.
+    ClientServerLeak,
+}
+
+/// The role a hop plays in a security finding's structural import trace.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "kebab-case")]
+pub enum TraceHopRole {
+    /// The `"use client"` boundary file the finding is anchored on.
+    ClientBoundary,
+    /// An intermediate module on the transitive import path.
+    Intermediate,
+    /// The module that reads the secret.
+    SecretSource,
+}
+
+/// One hop in a security finding's structural trace. Stored as an absolute path
+/// internally; JSON serialization strips the project root via
+/// `serde_path::serialize`.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct TraceHop {
+    /// File on this hop of the import chain.
+    #[serde(serialize_with = "serde_path::serialize")]
+    pub path: PathBuf,
+    /// 1-based line number. Import-chain hops point at the import site; the
+    /// terminal secret-source hop points at the source module when extraction
+    /// does not carry a more precise member-access span.
+    pub line: u32,
+    /// 0-based byte column offset.
+    pub col: u32,
+    /// Role of this hop in the chain.
+    pub role: TraceHopRole,
+}
+
+/// A local security CANDIDATE for downstream agent verification, NOT a verified
+/// vulnerability. Emitted only by `fallow security`, never under bare `fallow`
+/// or the `audit` gate. There is deliberately no `confidence` or
+/// `signal_strength` field: fallow does not prove exploitability, so the trace
+/// (its hops and length) is the only honest signal.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct SecurityFinding {
+    /// The rule that produced this candidate.
+    pub kind: SecurityFindingKind,
+    /// File the finding is anchored on (the client boundary). Absolute
+    /// internally; JSON strips the project root via `serde_path::serialize`.
+    #[serde(serialize_with = "serde_path::serialize")]
+    pub path: PathBuf,
+    /// 1-based line number of the anchor.
+    pub line: u32,
+    /// 0-based byte column offset of the anchor.
+    pub col: u32,
+    /// Agent/human-readable evidence (e.g. the named env var the chain reaches).
+    pub evidence: String,
+    /// Structural import-hop trace from the client boundary to the secret source.
+    /// The hop count is the uncalibrated signal; fallow does not prove the path
+    /// is exploitable.
+    pub trace: Vec<TraceHop>,
+    /// Machine-actionable next steps. Always emitted (possibly empty for
+    /// forward-compat). For security candidates this is a single file-level
+    /// suppress hint (`auto_fixable: false`); there is no auto-fix because
+    /// verification is the agent's job, not fallow's.
+    pub actions: Vec<IssueAction>,
 }
 
 /// A pnpm catalog entry declared in pnpm-workspace.yaml that no workspace package

@@ -74,7 +74,6 @@ pub fn apply_root_kind(value: &mut serde_json::Value, kind: &'static str) {
         );
     }
 }
-
 /// `fallow coverage setup --json` envelope.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -946,6 +945,11 @@ pub enum FallowOutput {
     /// `command`, `total_issues`, or `report`.
     #[serde(rename = "impact")]
     Impact(crate::impact::ImpactReport),
+    /// `fallow security --format json`. Required `security_findings` plus
+    /// `unresolved_edge_files`; ordered before the broader variants because the
+    /// `security_findings` discriminator is uniquely present here.
+    #[serde(rename = "security")]
+    Security(crate::security::SecurityOutput),
     /// `fallow dead-code --format json`.
     /// Required `total_issues` plus `summary: CheckSummary`.
     #[serde(rename = "dead-code")]

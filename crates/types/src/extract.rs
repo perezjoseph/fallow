@@ -68,6 +68,11 @@ pub struct ModuleInfo {
     pub iconify_prefixes: Vec<String>,
     /// Bare identifiers that may be resolved by framework auto-imports.
     pub auto_import_candidates: Vec<String>,
+    /// File-level string directives in source order (e.g. `"use client"`,
+    /// `"use server"`, `"use strict"`). Captured from `Program::directives`.
+    /// Consumed by the security `client-server-leak` detector to identify
+    /// React Server Component client boundaries.
+    pub directives: Vec<String>,
 }
 
 /// One alias entry tying an exported object's dotted property path to a namespace import.
@@ -440,7 +445,7 @@ const _: () = assert!(std::mem::size_of::<ImportedName>() == 24);
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(std::mem::size_of::<MemberAccess>() == 48);
 #[cfg(target_pointer_width = "64")]
-const _: () = assert!(std::mem::size_of::<ModuleInfo>() == 544);
+const _: () = assert!(std::mem::size_of::<ModuleInfo>() == 568);
 
 /// A re-export declaration.
 #[derive(Debug, Clone)]
