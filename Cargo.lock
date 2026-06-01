@@ -870,7 +870,7 @@ dependencies = [
  "sha2 0.11.0",
  "signal-hook",
  "similar 3.1.0",
- "srcmap-sourcemap",
+ "srcmap-sourcemap 0.3.7",
  "syn",
  "tempfile",
  "toml",
@@ -2167,7 +2167,7 @@ dependencies = [
  "serde",
  "serde_json",
  "srcmap-remapping",
- "srcmap-sourcemap",
+ "srcmap-sourcemap 0.3.6",
 ]
 
 [[package]]
@@ -2178,7 +2178,7 @@ checksum = "03344d79cd2f8f46a2e7ef50c4051196cf76c2adc4eac73edd13ef0bd4d6a300"
 dependencies = [
  "oxc_coverage_types",
  "serde_json",
- "srcmap-sourcemap",
+ "srcmap-sourcemap 0.3.6",
 ]
 
 [[package]]
@@ -3272,15 +3272,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bb59e0dc99488e5df4228114213cc2cfc1fa6071ab1b90706ba999fba866bee8"
 
 [[package]]
+name = "srcmap-codec"
+version = "0.3.7"
+source = "git+https://github.com/fallow-rs/srcmap?tag=v0.3.7#7ed61678f530bac7d28536dfecffe1739896f5de"
+
+[[package]]
 name = "srcmap-generator"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "217a648dc740bafed246c92226fbbffde1d9ee1ab1cb7c7f7dd4d3f4a140a725"
 dependencies = [
  "rustc-hash 2.1.2",
- "srcmap-codec",
- "srcmap-scopes",
- "srcmap-sourcemap",
+ "srcmap-codec 0.3.6",
+ "srcmap-scopes 0.3.6",
+ "srcmap-sourcemap 0.3.6",
 ]
 
 [[package]]
@@ -3290,7 +3295,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54bfd3f72f8d61b4992eac122212a6afc60388d4df703ca027379244bae7daab"
 dependencies = [
  "srcmap-generator",
- "srcmap-sourcemap",
+ "srcmap-sourcemap 0.3.6",
 ]
 
 [[package]]
@@ -3299,7 +3304,15 @@ version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45412ac7dcc91d43395072a2aa2480022963895c9791e52b519ab922e03c401a"
 dependencies = [
- "srcmap-codec",
+ "srcmap-codec 0.3.6",
+]
+
+[[package]]
+name = "srcmap-scopes"
+version = "0.3.7"
+source = "git+https://github.com/fallow-rs/srcmap?tag=v0.3.7#7ed61678f530bac7d28536dfecffe1739896f5de"
+dependencies = [
+ "srcmap-codec 0.3.7",
 ]
 
 [[package]]
@@ -3310,8 +3323,19 @@ checksum = "6cfb6ac3ef26caf22443bda4db17468e936a4adeaf073ac5235d9d367d98115d"
 dependencies = [
  "serde",
  "serde_json",
- "srcmap-codec",
- "srcmap-scopes",
+ "srcmap-codec 0.3.6",
+ "srcmap-scopes 0.3.6",
+]
+
+[[package]]
+name = "srcmap-sourcemap"
+version = "0.3.7"
+source = "git+https://github.com/fallow-rs/srcmap?tag=v0.3.7#7ed61678f530bac7d28536dfecffe1739896f5de"
+dependencies = [
+ "serde",
+ "serde_json",
+ "srcmap-codec 0.3.7",
+ "srcmap-scopes 0.3.7",
 ]
 
 [[package]]

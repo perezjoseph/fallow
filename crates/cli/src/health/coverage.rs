@@ -20,7 +20,7 @@ use globset::GlobSet;
 use oxc_coverage_instrument::{FileCoverage, FnEntry, Location, Position};
 use rustc_hash::{FxHashMap, FxHashSet};
 use serde::Deserialize;
-use srcmap_sourcemap::SourceMap;
+use srcmap_sourcemap_037::{GeneratedLocation, GeneratedOffsetLookup, SourceMap};
 use tempfile::TempDir;
 use url::Url;
 
@@ -97,6 +97,41 @@ struct SourceMapCacheEntry {
     data: serde_json::Value,
     #[serde(default, rename = "lineLengths")]
     line_lengths: Vec<u32>,
+}
+
+enum GeneratedPositionLookup<'a> {
+    SourceText {
+        source: &'a str,
+        lookup: GeneratedOffsetLookup<'a>,
+    },
+    V8LineOffsets(fallow_v8_coverage::LineOffsetTable),
+}
+
+impl GeneratedPositionLookup<'_> {
+    fn generated_position_for_offset(&self, v8_source_offset: u32) -> Option<GeneratedLocation> {
+        match self {
+            Self::SourceText { source, lookup } => {
+                let byte_offset = utf16_source_offset_to_byte_offset(source, v8_source_offset)?;
+                lookup.byte_offset_to_position(byte_offset)
+            }
+            Self::V8LineOffsets(line_offsets) => {
+                let pos = line_offsets.position(v8_source_offset);
+                Some(GeneratedLocation {
+                    line: pos.line.saturating_sub(1),
+                    column: pos.column,
+                })
+            }
+        }
+    }
+
+    fn original_position_for_offset(
+        &self,
+        sourcemap: &SourceMap,
+        v8_source_offset: u32,
+    ) -> Option<srcmap_sourcemap_037::OriginalLocation> {
+        let position = self.generated_position_for_offset(v8_source_offset)?;
+        sourcemap.original_position_for(position.line, position.column)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1183,12 +1218,21 @@ fn remap_script_with_source_map(
     entry: &SourceMapCacheEntry,
 ) -> Option<RemappedScript> {
     let sourcemap = SourceMap::from_json(&entry.data.to_string()).ok()?;
-    let offsets = line_offsets_for_script(script, entry)?;
+    let generated_source = generated_source_for_script(script);
+    let positions = match generated_source.as_deref() {
+        Some(source) => GeneratedPositionLookup::SourceText {
+            source,
+            lookup: GeneratedOffsetLookup::new(source),
+        },
+        None => GeneratedPositionLookup::V8LineOffsets(
+            fallow_v8_coverage::LineOffsetTable::from_v8_line_lengths(&entry.line_lengths)?,
+        ),
+    };
     let mut remapped = Vec::new();
     let mut residual_functions = Vec::new();
 
     for function in &script.functions {
-        match remap_function(script, function, entry, &sourcemap, &offsets) {
+        match remap_function(script, function, entry, &sourcemap, &positions) {
             Some(mapped) => remapped.push(mapped),
             None => residual_functions.push(function.clone()),
         }
@@ -1210,16 +1254,30 @@ fn remap_script_with_source_map(
     })
 }
 
-fn line_offsets_for_script(
-    script: &fallow_v8_coverage::ScriptCoverage,
-    entry: &SourceMapCacheEntry,
-) -> Option<fallow_v8_coverage::LineOffsetTable> {
+fn generated_source_for_script(script: &fallow_v8_coverage::ScriptCoverage) -> Option<String> {
     if let Some(path) = file_url_to_path(&script.url)
         && let Ok(source) = fs::read_to_string(path)
     {
-        return Some(fallow_v8_coverage::LineOffsetTable::from_source(&source));
+        return Some(source);
     }
-    fallow_v8_coverage::LineOffsetTable::from_v8_line_lengths(&entry.line_lengths)
+    None
+}
+
+fn utf16_source_offset_to_byte_offset(source: &str, target_offset: u32) -> Option<u32> {
+    let mut utf16_offset = 0u32;
+    for (byte_offset, ch) in source.char_indices() {
+        if utf16_offset == target_offset {
+            return u32::try_from(byte_offset).ok();
+        }
+        utf16_offset = utf16_offset.checked_add(ch.len_utf16() as u32)?;
+        if utf16_offset > target_offset {
+            return None;
+        }
+    }
+    if utf16_offset == target_offset {
+        return u32::try_from(source.len()).ok();
+    }
+    None
 }
 
 fn remap_function(
@@ -1227,21 +1285,18 @@ fn remap_function(
     function: &fallow_v8_coverage::FunctionCoverage,
     entry: &SourceMapCacheEntry,
     sourcemap: &SourceMap,
-    line_offsets: &fallow_v8_coverage::LineOffsetTable,
+    positions: &GeneratedPositionLookup<'_>,
 ) -> Option<RemappedFunction> {
     let outer = function.ranges.first().copied()?;
-    let start = offset_to_position(line_offsets, outer.start_offset);
-    let end = offset_to_position(line_offsets, outer.end_offset);
-    let start_lookup =
-        sourcemap.original_position_for(start.line.saturating_sub(1), start.column)?;
+    let start_lookup = positions.original_position_for_offset(sourcemap, outer.start_offset)?;
     let resolved_path = resolve_original_source_path(
         sourcemap.source(start_lookup.source),
         &script.url,
         entry.url.as_deref(),
     )?;
     let canonical_path = dunce::canonicalize(&resolved_path).unwrap_or(resolved_path);
-    let end_lookup = sourcemap
-        .original_position_for(end.line.saturating_sub(1), end.column)
+    let end_lookup = positions
+        .original_position_for_offset(sourcemap, outer.end_offset)
         .filter(|lookup| lookup.source == start_lookup.source);
     let end_line = end_lookup
         .as_ref()
@@ -1282,17 +1337,6 @@ fn remap_function(
         },
         hits: outer.count.min(u64::from(u32::MAX)) as u32,
     })
-}
-
-fn offset_to_position(
-    line_offsets: &fallow_v8_coverage::LineOffsetTable,
-    source_offset: u32,
-) -> Position {
-    let pos = line_offsets.position(source_offset);
-    Position {
-        line: pos.line,
-        column: pos.column,
-    }
 }
 
 fn resolve_original_source_path(
@@ -2897,8 +2941,9 @@ mod tests {
         let function_byte_offset = generated
             .find("function")
             .expect("generated source should contain function");
-        let function_v8_offset = generated[..function_byte_offset].encode_utf16().count() as u32;
-        assert_ne!(function_v8_offset, function_byte_offset as u32);
+        let function_utf16_offset = generated[..function_byte_offset].encode_utf16().count();
+        assert_ne!(function_utf16_offset, function_byte_offset);
+        let function_v8_offset = function_utf16_offset as u32;
 
         let v8_file = root.join("coverage-v8.json");
         let v8_json = serde_json::json!({

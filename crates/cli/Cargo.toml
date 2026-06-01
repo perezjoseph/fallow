@@ -77,7 +77,8 @@ tempfile = { workspace = true }
 miette = { workspace = true, features = ["fancy"] }
 rustc-hash = { workspace = true }
 oxc_coverage_instrument = { workspace = true }
-srcmap-sourcemap = "0.3.6"
+# Keep aliased until oxc_coverage_instrument drops its exact registry srcmap 0.3.6 pin.
+srcmap_sourcemap_037 = { package = "srcmap-sourcemap", git = "https://github.com/fallow-rs/srcmap", tag = "v0.3.7" }
 httpdate = { workspace = true }
 ureq = { workspace = true }
 url = "2"
