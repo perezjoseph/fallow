@@ -3,6 +3,14 @@
     clippy::print_stderr,
     reason = "schema-emit binary prints the regenerated schema to stdout and errors to stderr"
 )]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        reason = "schema drift tests use unwrap and expect to keep invariant checks concise"
+    )
+)]
 
 //! Regenerate `docs/output-schema.json` from the Rust source of truth.
 //!
