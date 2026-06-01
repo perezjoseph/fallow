@@ -100,6 +100,9 @@ fn kill_pid(pid: u32) {
 fn kill_pid(pid: u32) {
     use windows_sys::Win32::Foundation::{CloseHandle, FALSE, HANDLE};
     use windows_sys::Win32::System::Threading::{OpenProcess, PROCESS_TERMINATE, TerminateProcess};
+    // SAFETY: OpenProcess returns null on failure (which we check),
+    // TerminateProcess with exit code 1 is a no-op if the handle is
+    // null. CloseHandle on a valid handle is well-defined.
     unsafe {
         let handle: HANDLE = OpenProcess(PROCESS_TERMINATE, FALSE, pid);
         if handle.is_null() {
@@ -133,6 +136,7 @@ fn pid_is_alive(pid: u32) -> bool {
     use windows_sys::Win32::System::Threading::{
         OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, WaitForSingleObject,
     };
+    // SAFETY: identical safety contract as kill_pid.
     unsafe {
         let handle: HANDLE = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
         if handle.is_null() {

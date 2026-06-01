@@ -55,6 +55,9 @@ unsafe extern "system" fn handler(ctrl_type: u32) -> BOOL {
     reason = "FFI to Win32 SetConsoleCtrlHandler; `handler` matches the documented PHANDLER_ROUTINE ABI"
 )]
 pub fn install() -> io::Result<()> {
+    // SAFETY: `handler` matches the documented `PHANDLER_ROUTINE` ABI;
+    // the second argument (`Add`) is TRUE so Windows pushes onto the
+    // existing handler chain rather than replacing it.
     let ok: BOOL = unsafe { SetConsoleCtrlHandler(Some(handler), 1) };
     if ok == 0 {
         return Err(io::Error::last_os_error());

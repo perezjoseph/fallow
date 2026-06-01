@@ -1528,6 +1528,9 @@ mod windows_process {
 
     impl Drop for ProcessHandle {
         fn drop(&mut self) {
+            // SAFETY: `self.0` is a non-null handle obtained from a successful
+            // `OpenProcess` call. We have unique ownership (the value is only
+            // ever created inside `is_alive`), so this is the sole consumer.
             unsafe {
                 CloseHandle(self.0);
             }
@@ -1542,8 +1545,13 @@ mod windows_process {
     /// definitively does not exist (`ERROR_INVALID_PARAMETER`) or the wait
     /// reports the process has exited.
     pub(super) fn is_alive(pid: u32) -> bool {
+        // SAFETY: `OpenProcess` accepts any `u32` PID; it either returns a
+        // non-null handle we own, or null on failure with `GetLastError`
+        // describing why. No memory is borrowed across the FFI boundary.
         let raw = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
         if raw.is_null() {
+            // SAFETY: `GetLastError` reads thread-local storage set by the
+            // failing `OpenProcess` call. It has no preconditions.
             let err = unsafe { GetLastError() };
             #[expect(
                 clippy::match_same_arms,
@@ -1556,6 +1564,8 @@ mod windows_process {
             };
         }
         let handle = ProcessHandle(raw);
+        // SAFETY: `handle.0` is non-null (checked above) and owned by the
+        // `ProcessHandle` RAII wrapper.
         let wait_result = unsafe { WaitForSingleObject(handle.0, 0) };
         wait_result != WAIT_OBJECT_0
     }
