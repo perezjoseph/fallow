@@ -1,6 +1,6 @@
 //! Catalogue-driven tainted-sink candidate detector (opt-in, `fallow security`).
 //!
-//! Matches category-blind [`SinkSite`](fallow_types::extract::SinkSite)s captured
+//! Matches category-blind [`SinkSite`]s captured
 //! by the extract layer against the data-driven catalogue
 //! (`security_matchers.toml`). Findings are CANDIDATES for downstream agent
 //! verification, NOT verified vulnerabilities: detection is deterministic and
