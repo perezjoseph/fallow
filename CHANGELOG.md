@@ -7,10 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.88.0] - 2026-06-03
+
 ### Added
 
 - **The duplication `minOccurrences` threshold is now reachable from the bare `fallow` command and the VS Code extension.** Raising the rule-of-three threshold previously required editing the config file or running the standalone `fallow dupes` subcommand. A new global `--dupes-min-occurrences N` flag now applies in combined mode (validated `>= 2`, falling back to the config value), and the VS Code extension gains a `fallow.duplication.minOccurrences` setting that forwards it. The neighbouring `fallow.duplication.threshold` extension setting was also mislabeled: it is a duplication-percentage failure cap where `0` means no limit, not a minimum line count, and it defaulted to `5`. Its description is corrected and its default aligned to `0` to match the CLI. (Closes [#894](https://github.com/fallow-rs/fallow/issues/894). Thanks [@rbalet](https://github.com/rbalet) for the report.)
-- **Lowercase `-v` now prints the version.** `fallow -v`, `fallow -V`, and `fallow --version` all print the version string. Previously only `-V` and `--version` worked (clap's default). Lowercase `-v` is what every tool in the TS/JS toolchain uses for the version (node, npm, pnpm, yarn, bun, tsc, eslint, prettier), so it is now the primary short form; `-V` is kept for back-compat (matching knip, oxlint, and biome). (Closes [#916](https://github.com/fallow-rs/fallow/issues/916). Thanks [@rbalet](https://github.com/rbalet) for the report.)
+- **Lowercase `-v` now prints the version.** `fallow -v`, `fallow -V`, and `fallow --version` all print the version string. Previously only `-V` and `--version` worked (clap's default). Lowercase `-v` is what the TS/JS toolchain uses for the version (node, npm, pnpm, yarn, bun, tsc), so it is now the primary short form, with `-V` kept for back-compat. (Closes [#916](https://github.com/fallow-rs/fallow/issues/916). Thanks [@rbalet](https://github.com/rbalet) for the report.)
 
 ### Fixed
 
@@ -18,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The VS Code extension now backfills its managed `fallow` CLI binary.** First-run binary acquisition now targets the GitHub release tag matching the extension version, downloads both `fallow-lsp` and `fallow` when needed, and lets sidebar analysis or fix commands download only the missing CLI if an LSP binary is already available. Failed managed downloads offer retry, settings, and output-channel actions, and changing `fallow.autoDownload` restarts binary resolution. Thanks [@rbalet](https://github.com/rbalet) for the report. (Closes [#917](https://github.com/fallow-rs/fallow/issues/917).)
 - **Angular external templates now credit service members reached through untyped `inject()` component fields.** Exported Angular component classes now carry `ClassHeritageInfo.instance_bindings` for properties initialized with named-import `inject(Service)` or an alias such as `inject as ngInject`, so external templates like `{{ exampleService.onValueChange() }}` mark the target service member as used. Same-named `inject` functions from non-Angular modules stay ignored. Thanks [@OmerGronich](https://github.com/OmerGronich) for the report. (Closes [#911](https://github.com/fallow-rs/fallow/issues/911).)
 - **Bare `pnpm <binary>` script invocations now credit declared dependencies.** Scripts and CI commands such as `pnpm envinfo --system` now mark the matching declared package as used, while local script shorthands (`pnpm build`) and pnpm built-ins (`pnpm install`, `pnpm audit`, `pnpm add`, `pnpm test`, `pnpm start`) remain ignored. Thanks [@cope](https://github.com/cope) for the report. (Closes [#914](https://github.com/fallow-rs/fallow/issues/914).)
+- **Class members used through local structurally typed function parameters are no longer reported as unused.** When a concrete class instance is passed directly as `new Class()` or via a constructor-bound local into a same-file function whose typed parameter reads specific members, fallow now credits only those concrete class members. The fix stays scoped to local callees and exact argument positions, so unrelated class members still report. The extraction cache version is bumped so warm caches re-extract affected files once. Thanks [@palisarbaro](https://github.com/palisarbaro) for the report. (Closes [#910](https://github.com/fallow-rs/fallow/issues/910).)
 
 ## [2.87.0] - 2026-06-03
 
@@ -31,7 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Class members used through local structurally typed function parameters are no longer reported as unused.** When a concrete class instance is passed directly as `new Class()` or via a constructor-bound local into a same-file function whose typed parameter reads specific members, fallow now credits only those concrete class members. The fix stays scoped to local callees and exact argument positions, so unrelated class members still report. The extraction cache version is bumped so warm caches re-extract affected files once. Thanks [@palisarbaro](https://github.com/palisarbaro) for the report. (Closes [#910](https://github.com/fallow-rs/fallow/issues/910).)
 - **`fallow security` now suppresses more sanitized sink candidates without weakening the candidate framing.** DOMPurify-backed HTML suppression now shares a domain-scoped sanitizer model with new literal-allowlist URL guards and `path.relative` containment guards, so allowlisted redirects, allowlisted outbound URLs, and contained path values no longer report as tainted-sink candidates. Near misses still report: mutable allowlists, helper predicates, guards after route file use, plain `startsWith(base)` path checks, and sanitizer use in the wrong domain remain candidates. The extraction cache version is bumped so warm caches re-extract affected files once. (Closes [#863](https://github.com/fallow-rs/fallow/issues/863).)
 - **Security sink candidates in Vue and Svelte single-file components now point at the real source line.** Sink extraction reused parser-local byte offsets after the surrounding SFC source had been restored for line lookup, so reports pointed at a line inside the isolated script body instead of the component file. Captured sink spans are now remapped through the same SFC offset translation used for imports, exports, and other extracted references, with a Vue `script setup` regression test pinning the resolved span.
 - **Firebase Messaging service workers are no longer reported as unused files.** The Firebase plugin activates on the exact `firebase` dependency and keeps both root and nested `public/firebase-messaging-sw.js` files reachable, while unrelated public files still report normally. Thanks [@rbalet](https://github.com/rbalet) for the report. (Closes [#873](https://github.com/fallow-rs/fallow/issues/873).)
@@ -2758,7 +2760,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `--changed-since` and `--fail-on-issues` for CI
 - Cross-workspace resolution for npm/yarn/pnpm workspaces
 
-[Unreleased]: https://github.com/fallow-rs/fallow/compare/v2.87.0...HEAD
+[Unreleased]: https://github.com/fallow-rs/fallow/compare/v2.88.0...HEAD
+[2.88.0]: https://github.com/fallow-rs/fallow/compare/v2.87.0...v2.88.0
 [2.87.0]: https://github.com/fallow-rs/fallow/compare/v2.86.0...v2.87.0
 [2.86.0]: https://github.com/fallow-rs/fallow/compare/v2.85.0...v2.86.0
 [2.85.0]: https://github.com/fallow-rs/fallow/compare/v2.84.0...v2.85.0
