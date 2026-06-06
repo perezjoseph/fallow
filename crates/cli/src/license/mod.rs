@@ -769,6 +769,36 @@ mod tests {
     }
 
     #[test]
+    fn read_jwt_reads_from_file_and_normalizes() {
+        let dir = tempfile::TempDir::new().expect("temp dir should be created");
+        let path = dir.path().join("license.jwt");
+        std::fs::write(&path, " a.\nb . c \n").expect("license file should be written");
+        let args = ActivateArgs {
+            from_file: Some(path),
+            ..Default::default()
+        };
+
+        assert_eq!(read_jwt(&args).unwrap(), "a.b.c");
+    }
+
+    #[test]
+    fn read_jwt_reports_file_read_error() {
+        let dir = tempfile::TempDir::new().expect("temp dir should be created");
+        let path = dir.path().join("missing.jwt");
+        let args = ActivateArgs {
+            from_file: Some(path.clone()),
+            ..Default::default()
+        };
+
+        let error = read_jwt(&args).expect_err("missing file should fail");
+
+        assert!(
+            error.contains(&format!("failed to read {}", path.display())),
+            "got: {error}"
+        );
+    }
+
+    #[test]
     fn read_jwt_errors_when_no_source() {
         let args = ActivateArgs::default();
         assert!(read_jwt(&args).is_err());
@@ -980,6 +1010,29 @@ mod tests {
             json_value(&status, LicenseKind::Refresh)["kind"],
             "license-refresh"
         );
+    }
+
+    #[test]
+    fn license_kind_strings_cover_all_subcommands() {
+        assert_eq!(LicenseKind::Status.as_str(), "license-status");
+        assert_eq!(LicenseKind::Activate.as_str(), "license-activate");
+        assert_eq!(LicenseKind::Refresh.as_str(), "license-refresh");
+        assert_eq!(LicenseKind::Deactivate.as_str(), "license-deactivate");
+    }
+
+    #[test]
+    fn status_json_expired_watermark_keeps_claims_visible() {
+        let status = LicenseStatus::ExpiredWatermark {
+            claims: sample_claims(&["runtime_coverage"]),
+            days_since_expiry: 12,
+        };
+        let value = json_value(&status, LicenseKind::Status);
+
+        assert_eq!(value["state"], "expired_watermark");
+        assert_eq!(value["tier"], "team");
+        assert_eq!(value["seats"], 5);
+        assert_eq!(value["days_since_expiry"], 12);
+        assert_eq!(value["runtime_coverage_enabled"], true);
     }
 
     #[test]
