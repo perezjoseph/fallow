@@ -2882,87 +2882,24 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
             runtime_coverage,
             min_invocations_hot,
             gate_marker,
-        } => {
-            if cli.baseline.is_some() || cli.save_baseline.is_some() {
-                return emit_error(
-                    "audit uses per-analysis baselines. Use --dead-code-baseline, --health-baseline, or --dupes-baseline (or save them with `fallow dead-code|health|dupes --save-baseline <file>`)",
-                    2,
-                    output,
-                );
-            }
-            let audit_cfg = match load_config(
-                root,
-                &cli.config,
-                output,
-                cli.no_cache,
-                threads,
-                cli.production,
-                quiet,
-            ) {
-                Ok(c) => c.audit,
-                Err(code) => return code,
-            };
-            let production = match resolve_production_modes(
-                cli,
-                root,
-                output,
+        } => dispatch_audit(
+            dispatch,
+            &AuditDispatchArgs {
                 production_dead_code,
                 production_health,
                 production_dupes,
-            ) {
-                Ok(production) => production,
-                Err(code) => return code,
-            };
-            let resolved_dead_code_baseline = resolve_audit_baseline_path(
-                root,
-                dead_code_baseline.as_deref(),
-                audit_cfg.dead_code_baseline.as_deref(),
-            );
-            let resolved_health_baseline = resolve_audit_baseline_path(
-                root,
-                health_baseline.as_deref(),
-                audit_cfg.health_baseline.as_deref(),
-            );
-            let resolved_dupes_baseline = resolve_audit_baseline_path(
-                root,
-                dupes_baseline.as_deref(),
-                audit_cfg.dupes_baseline.as_deref(),
-            );
-            let coverage =
-                coverage.or_else(|| std::env::var("FALLOW_COVERAGE").ok().map(PathBuf::from));
-            audit::run_audit(
-                &audit::AuditOptions {
-                    root,
-                    config_path: &cli.config,
-                    output,
-                    no_cache: cli.no_cache,
-                    threads,
-                    quiet,
-                    changed_since: cli.changed_since.as_deref(),
-                    production: cli.production,
-                    production_dead_code: Some(production.dead_code),
-                    production_health: Some(production.health),
-                    production_dupes: Some(production.dupes),
-                    workspace: cli.workspace.as_deref(),
-                    changed_workspaces: cli.changed_workspaces.as_deref(),
-                    explain: cli.explain,
-                    explain_skipped: cli.explain_skipped,
-                    performance: cli.performance,
-                    group_by: cli.group_by,
-                    dead_code_baseline: resolved_dead_code_baseline.as_deref(),
-                    health_baseline: resolved_health_baseline.as_deref(),
-                    dupes_baseline: resolved_dupes_baseline.as_deref(),
-                    max_crap,
-                    coverage: coverage.as_deref(),
-                    coverage_root: coverage_root.as_deref(),
-                    gate: gate.map_or(audit_cfg.gate, Into::into),
-                    include_entry_exports: cli.include_entry_exports,
-                    runtime_coverage: runtime_coverage.as_deref(),
-                    min_invocations_hot,
-                },
-                gate_marker.as_deref(),
-            )
-        }
+                dead_code_baseline,
+                health_baseline,
+                dupes_baseline,
+                max_crap,
+                coverage,
+                coverage_root,
+                gate,
+                runtime_coverage,
+                min_invocations_hot,
+                gate_marker,
+            },
+        ),
         Command::Impact { subcommand } => match subcommand {
             Some(ImpactCli::Enable) => {
                 let newly = impact::enable(root);
@@ -3498,6 +3435,146 @@ fn dispatch_dupes(dispatch: &DispatchContext<'_>, args: &DupesDispatchArgs) -> E
         group_by: cli.group_by,
         performance: cli.performance,
     })
+}
+
+struct AuditDispatchArgs {
+    production_dead_code: bool,
+    production_health: bool,
+    production_dupes: bool,
+    dead_code_baseline: Option<PathBuf>,
+    health_baseline: Option<PathBuf>,
+    dupes_baseline: Option<PathBuf>,
+    max_crap: Option<f64>,
+    coverage: Option<PathBuf>,
+    coverage_root: Option<PathBuf>,
+    gate: Option<AuditGateArg>,
+    runtime_coverage: Option<PathBuf>,
+    min_invocations_hot: u64,
+    gate_marker: Option<String>,
+}
+
+struct ResolvedAuditInputs {
+    audit_cfg: fallow_config::AuditConfig,
+    production: ProductionModes,
+    dead_code_baseline: Option<PathBuf>,
+    health_baseline: Option<PathBuf>,
+    dupes_baseline: Option<PathBuf>,
+    coverage: Option<PathBuf>,
+}
+
+fn dispatch_audit(dispatch: &DispatchContext<'_>, args: &AuditDispatchArgs) -> ExitCode {
+    let cli = dispatch.cli;
+    let output = dispatch.output;
+
+    if cli.baseline.is_some() || cli.save_baseline.is_some() {
+        return emit_error(
+            "audit uses per-analysis baselines. Use --dead-code-baseline, --health-baseline, or --dupes-baseline (or save them with `fallow dead-code|health|dupes --save-baseline <file>`)",
+            2,
+            output,
+        );
+    }
+
+    let inputs = match resolve_audit_inputs(dispatch, args) {
+        Ok(inputs) => inputs,
+        Err(code) => return code,
+    };
+
+    run_resolved_audit(dispatch, args, &inputs)
+}
+
+fn resolve_audit_inputs(
+    dispatch: &DispatchContext<'_>,
+    args: &AuditDispatchArgs,
+) -> Result<ResolvedAuditInputs, ExitCode> {
+    let cli = dispatch.cli;
+    let root = dispatch.root;
+    let output = dispatch.output;
+    let audit_cfg = load_config(
+        root,
+        &cli.config,
+        output,
+        cli.no_cache,
+        dispatch.threads,
+        cli.production,
+        dispatch.quiet,
+    )?
+    .audit;
+    let production = resolve_production_modes(
+        cli,
+        root,
+        output,
+        args.production_dead_code,
+        args.production_health,
+        args.production_dupes,
+    )?;
+    let resolved_dead_code_baseline = resolve_audit_baseline_path(
+        root,
+        args.dead_code_baseline.as_deref(),
+        audit_cfg.dead_code_baseline.as_deref(),
+    );
+    let resolved_health_baseline = resolve_audit_baseline_path(
+        root,
+        args.health_baseline.as_deref(),
+        audit_cfg.health_baseline.as_deref(),
+    );
+    let resolved_dupes_baseline = resolve_audit_baseline_path(
+        root,
+        args.dupes_baseline.as_deref(),
+        audit_cfg.dupes_baseline.as_deref(),
+    );
+    let coverage = args
+        .coverage
+        .clone()
+        .or_else(|| std::env::var("FALLOW_COVERAGE").ok().map(PathBuf::from));
+
+    Ok(ResolvedAuditInputs {
+        audit_cfg,
+        production,
+        dead_code_baseline: resolved_dead_code_baseline,
+        health_baseline: resolved_health_baseline,
+        dupes_baseline: resolved_dupes_baseline,
+        coverage,
+    })
+}
+
+fn run_resolved_audit(
+    dispatch: &DispatchContext<'_>,
+    args: &AuditDispatchArgs,
+    inputs: &ResolvedAuditInputs,
+) -> ExitCode {
+    let cli = dispatch.cli;
+    audit::run_audit(
+        &audit::AuditOptions {
+            root: dispatch.root,
+            config_path: &cli.config,
+            output: dispatch.output,
+            no_cache: cli.no_cache,
+            threads: dispatch.threads,
+            quiet: dispatch.quiet,
+            changed_since: cli.changed_since.as_deref(),
+            production: cli.production,
+            production_dead_code: Some(inputs.production.dead_code),
+            production_health: Some(inputs.production.health),
+            production_dupes: Some(inputs.production.dupes),
+            workspace: cli.workspace.as_deref(),
+            changed_workspaces: cli.changed_workspaces.as_deref(),
+            explain: cli.explain,
+            explain_skipped: cli.explain_skipped,
+            performance: cli.performance,
+            group_by: cli.group_by,
+            dead_code_baseline: inputs.dead_code_baseline.as_deref(),
+            health_baseline: inputs.health_baseline.as_deref(),
+            dupes_baseline: inputs.dupes_baseline.as_deref(),
+            max_crap: args.max_crap,
+            coverage: inputs.coverage.as_deref(),
+            coverage_root: args.coverage_root.as_deref(),
+            gate: args.gate.map_or(inputs.audit_cfg.gate, Into::into),
+            include_entry_exports: cli.include_entry_exports,
+            runtime_coverage: args.runtime_coverage.as_deref(),
+            min_invocations_hot: args.min_invocations_hot,
+        },
+        args.gate_marker.as_deref(),
+    )
 }
 
 struct HealthDispatchArgs<'a> {
