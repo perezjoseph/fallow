@@ -239,48 +239,37 @@ pub fn prepare_options(
     })
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "sidecar invocation needs the same filter context as health analysis"
-)]
+pub(super) struct RuntimeCoverageAnalysisInput<'a> {
+    pub root: &'a Path,
+    pub modules: &'a [fallow_types::extract::ModuleInfo],
+    pub analysis_output: &'a fallow_core::AnalysisOutput,
+    pub istanbul_coverage: Option<&'a IstanbulCoverage>,
+    pub file_paths: &'a FxHashMap<fallow_types::discover::FileId, &'a PathBuf>,
+    pub ignore_set: &'a GlobSet,
+    pub changed_files: Option<&'a FxHashSet<PathBuf>>,
+    pub ws_roots: Option<&'a [PathBuf]>,
+    pub top: Option<usize>,
+    pub codeowners_path: Option<&'a str>,
+    pub quiet: bool,
+    pub output: OutputFormat,
+}
+
 pub(super) fn analyze(
     options: &RuntimeCoverageOptions,
-    root: &Path,
-    modules: &[fallow_types::extract::ModuleInfo],
-    analysis_output: &fallow_core::AnalysisOutput,
-    istanbul_coverage: Option<&IstanbulCoverage>,
-    file_paths: &FxHashMap<fallow_types::discover::FileId, &PathBuf>,
-    ignore_set: &GlobSet,
-    changed_files: Option<&FxHashSet<PathBuf>>,
-    ws_roots: Option<&[PathBuf]>,
-    top: Option<usize>,
-    codeowners_path: Option<&str>,
-    quiet: bool,
-    output: OutputFormat,
+    input: &RuntimeCoverageAnalysisInput<'_>,
 ) -> Result<RuntimeCoverageReport, ExitCode> {
-    let sidecar =
-        discover_sidecar(Some(root)).map_err(|message| emit_error(&message, 4, output))?;
+    let sidecar = discover_sidecar(Some(input.root))
+        .map_err(|message| emit_error(&message, 4, input.output))?;
     let prepared_sources = prepare_coverage_sources(&options.path)
-        .map_err(|message| emit_error(&message, 5, output))?;
-    let static_signals = build_static_signal_index(modules, analysis_output, file_paths)
-        .map_err(|message| emit_error(&message, 2, output))?;
-    let (request, locations) = build_request(
-        options,
-        root,
-        modules,
-        analysis_output,
-        &static_signals,
-        istanbul_coverage,
-        file_paths,
-        ignore_set,
-        changed_files,
-        ws_roots,
-        prepared_sources.sources,
-        codeowners_path,
-    );
-    let response = run_sidecar(&sidecar, &request, quiet, output)?;
+        .map_err(|message| emit_error(&message, 5, input.output))?;
+    let static_signals =
+        build_static_signal_index(input.modules, input.analysis_output, input.file_paths)
+            .map_err(|message| emit_error(&message, 2, input.output))?;
+    let (request, locations) =
+        build_request(options, input, &static_signals, prepared_sources.sources);
+    let response = run_sidecar(&sidecar, &request, input.quiet, input.output)?;
     let mut report = convert_response(response, &locations, options.watermark);
-    apply_top_limit(&mut report, top);
+    apply_top_limit(&mut report, input.top);
     Ok(report)
 }
 
@@ -764,39 +753,28 @@ fn static_function(
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "request assembly mirrors the health analysis filter context plus prepared coverage inputs"
-)]
 fn build_request(
     options: &RuntimeCoverageOptions,
-    root: &Path,
-    modules: &[fallow_types::extract::ModuleInfo],
-    analysis_output: &fallow_core::AnalysisOutput,
+    input: &RuntimeCoverageAnalysisInput<'_>,
     static_signals: &StaticSignalIndex,
-    istanbul_coverage: Option<&IstanbulCoverage>,
-    file_paths: &FxHashMap<fallow_types::discover::FileId, &PathBuf>,
-    ignore_set: &GlobSet,
-    changed_files: Option<&FxHashSet<PathBuf>>,
-    ws_roots: Option<&[PathBuf]>,
     coverage_sources: Vec<CoverageSource>,
-    codeowners_path: Option<&str>,
 ) -> (Request, FunctionLocations) {
-    let project_root = match ws_roots {
+    let project_root = match input.ws_roots {
         Some([only]) => only.as_path(),
-        _ => root,
+        _ => input.root,
     };
     let mut files = Vec::new();
     let mut locations = FxHashMap::default();
-    let graph = analysis_output.graph.as_ref();
-    let codeowners = crate::codeowners::CodeOwners::load(root, codeowners_path).ok();
-    for module in modules {
-        let Some(&path) = file_paths.get(&module.file_id) else {
+    let graph = input.analysis_output.graph.as_ref();
+    let codeowners = crate::codeowners::CodeOwners::load(input.root, input.codeowners_path).ok();
+    for module in input.modules {
+        let Some(&path) = input.file_paths.get(&module.file_id) else {
             continue;
         };
-        let canonical_path =
-            istanbul_coverage.map(|_| dunce::canonicalize(path).unwrap_or_else(|_| path.clone()));
-        let relative = path.strip_prefix(root).unwrap_or(path);
+        let canonical_path = input
+            .istanbul_coverage
+            .map(|_| dunce::canonicalize(path).unwrap_or_else(|_| path.clone()));
+        let relative = path.strip_prefix(input.root).unwrap_or(path);
         let caller_count = graph
             .and_then(|g| g.reverse_deps.get(module.file_id.0 as usize))
             .map_or(0_usize, Vec::len);
@@ -804,15 +782,15 @@ fn build_request(
         let owner_count = codeowners
             .as_ref()
             .map(|co| co.owner_count_of(relative).unwrap_or(0));
-        if ignore_set.is_match(relative) {
+        if input.ignore_set.is_match(relative) {
             continue;
         }
-        if let Some(changed) = changed_files
+        if let Some(changed) = input.changed_files
             && !changed.contains(path.as_path())
         {
             continue;
         }
-        if let Some(ws) = ws_roots
+        if let Some(ws) = input.ws_roots
             && !ws.iter().any(|r| path.starts_with(r))
         {
             continue;
@@ -832,7 +810,7 @@ fn build_request(
                     canonical_path.as_deref(),
                     function,
                     static_signals,
-                    istanbul_coverage,
+                    input.istanbul_coverage,
                 );
                 static_function(
                     &relative_posix,
@@ -2017,11 +1995,11 @@ const fn verdict_rank(verdict: RuntimeCoverageVerdict) -> u8 {
 mod tests {
     use super::{
         AccumulatedFunction, BINARY_SIGNING_VERIFY_KEY, PackageManagerOutput, RemappedFnKey,
-        RemappedFunction, StaticSignalIndex, build_request, build_static_signal_index,
-        convert_response, discover_sidecar, looks_like_istanbul, merge_remapped_functions,
-        path_binary_candidates, prepare_coverage_sources, resolve_original_source_path,
-        resolve_sidecar_via_command, sidecar_binary_name, static_function,
-        verify_sidecar_signature, write_istanbul_coverage_file,
+        RemappedFunction, RuntimeCoverageAnalysisInput, StaticSignalIndex, build_request,
+        build_static_signal_index, convert_response, discover_sidecar, looks_like_istanbul,
+        merge_remapped_functions, path_binary_candidates, prepare_coverage_sources,
+        resolve_original_source_path, resolve_sidecar_via_command, sidecar_binary_name,
+        static_function, verify_sidecar_signature, write_istanbul_coverage_file,
     };
     use crate::health::RuntimeCoverageOptions;
     use fallow_config::{FallowConfig, OutputFormat};
@@ -2797,20 +2775,27 @@ mod tests {
         let ignore_set = GlobSetBuilder::new()
             .build()
             .unwrap_or_else(|err| panic!("failed to build empty globset: {err}"));
+        let analysis_output = empty_analysis_output();
+        let file_paths = FxHashMap::default();
 
         let (request, _locations) = build_request(
             &options,
-            &root,
-            &[],
-            &empty_analysis_output(),
+            &RuntimeCoverageAnalysisInput {
+                root: &root,
+                modules: &[],
+                analysis_output: &analysis_output,
+                istanbul_coverage: None,
+                file_paths: &file_paths,
+                ignore_set: &ignore_set,
+                changed_files: None,
+                ws_roots: Some(&ws_roots),
+                top: None,
+                codeowners_path: None,
+                quiet: true,
+                output: OutputFormat::Json,
+            },
             &StaticSignalIndex::default(),
-            None,
-            &FxHashMap::default(),
-            &ignore_set,
-            None,
-            Some(&ws_roots),
             vec![],
-            None,
         );
 
         assert_eq!(request.project_root, ws_root.to_string_lossy());
@@ -2895,20 +2880,26 @@ mod tests {
         let ignore_set = GlobSetBuilder::new()
             .build()
             .unwrap_or_else(|err| panic!("failed to build empty globset: {err}"));
+        let analysis_output = empty_analysis_output();
 
         let (request, _locations) = build_request(
             &options,
-            &root,
-            &modules,
-            &empty_analysis_output(),
+            &RuntimeCoverageAnalysisInput {
+                root: &root,
+                modules: &modules,
+                analysis_output: &analysis_output,
+                istanbul_coverage: None,
+                file_paths: &file_paths,
+                ignore_set: &ignore_set,
+                changed_files: None,
+                ws_roots: None,
+                top: None,
+                codeowners_path: None,
+                quiet: true,
+                output: OutputFormat::Json,
+            },
             &static_signals,
-            None,
-            &file_paths,
-            &ignore_set,
-            None,
-            None,
             vec![],
-            None,
         );
 
         let app_file = request

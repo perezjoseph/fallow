@@ -412,18 +412,20 @@ fn execute_health_inner(
             .expect("runtime coverage requires analysis output");
         Some(coverage::analyze(
             production_options,
-            &config.root,
-            &modules,
-            analysis_output,
-            istanbul_coverage.as_ref(),
-            &file_paths,
-            &ignore_set,
-            changed_files.as_ref(),
-            ws_roots.as_deref(),
-            opts.top,
-            config.codeowners.as_deref(),
-            opts.quiet,
-            opts.output,
+            &coverage::RuntimeCoverageAnalysisInput {
+                root: &config.root,
+                modules: &modules,
+                analysis_output,
+                istanbul_coverage: istanbul_coverage.as_ref(),
+                file_paths: &file_paths,
+                ignore_set: &ignore_set,
+                changed_files: changed_files.as_ref(),
+                ws_roots: ws_roots.as_deref(),
+                top: opts.top,
+                codeowners_path: config.codeowners.as_deref(),
+                quiet: opts.quiet,
+                output: opts.output,
+            },
         )?)
     } else {
         None
