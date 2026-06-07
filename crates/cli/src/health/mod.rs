@@ -466,19 +466,15 @@ fn execute_health_inner(
         diff_index,
     );
 
-    let t = Instant::now();
-    let (mut targets, target_thresholds) = compute_targets(
+    let (targets, target_thresholds, targets_ms) = compute_filtered_targets(
         opts,
         score_output.as_ref(),
         file_scores_slice,
         &hotspots,
         loaded_baseline.as_ref(),
-        &config.root,
+        &config,
+        diff_index,
     );
-    if let Some(diff_index) = diff_index {
-        filter_refactoring_targets_by_diff(&mut targets, diff_index, &config.root);
-    }
-    let targets_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     if let Some(report) = runtime_coverage.as_mut() {
         let ctx = RuntimeCoverageFilterContext::new(&config.root)
@@ -965,6 +961,34 @@ fn compute_filtered_hotspots(
     (
         hotspots,
         hotspot_summary,
+        t.elapsed().as_secs_f64() * 1000.0,
+    )
+}
+
+fn compute_filtered_targets(
+    opts: &HealthOptions<'_>,
+    score_output: Option<&scoring::FileScoreOutput>,
+    file_scores_slice: &[FileHealthScore],
+    hotspots: &[HotspotEntry],
+    loaded_baseline: Option<&HealthBaselineData>,
+    config: &ResolvedConfig,
+    diff_index: Option<&crate::report::ci::diff_filter::DiffIndex>,
+) -> (Vec<RefactoringTarget>, Option<TargetThresholds>, f64) {
+    let t = Instant::now();
+    let (mut targets, target_thresholds) = compute_targets(
+        opts,
+        score_output,
+        file_scores_slice,
+        hotspots,
+        loaded_baseline,
+        &config.root,
+    );
+    if let Some(diff_index) = diff_index {
+        filter_refactoring_targets_by_diff(&mut targets, diff_index, &config.root);
+    }
+    (
+        targets,
+        target_thresholds,
         t.elapsed().as_secs_f64() * 1000.0,
     )
 }
