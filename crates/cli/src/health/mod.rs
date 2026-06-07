@@ -456,23 +456,15 @@ fn execute_health_inner(
 
     let loaded_baseline = apply_health_baseline_and_top(opts, &config, &mut findings)?;
 
-    let t = Instant::now();
-    let (mut hotspots, hotspot_summary) = if let Some(churn_data) = churn_fetch {
-        compute_hotspots(
-            opts,
-            &config,
-            file_scores_slice,
-            &ignore_set,
-            ws_roots.as_deref(),
-            churn_data,
-        )
-    } else {
-        (Vec::new(), None)
-    };
-    if let Some(diff_index) = diff_index {
-        filter_hotspots_by_diff(&mut hotspots, diff_index, &config.root);
-    }
-    let hotspots_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let (hotspots, hotspot_summary, hotspots_ms) = compute_filtered_hotspots(
+        opts,
+        &config,
+        file_scores_slice,
+        &ignore_set,
+        ws_roots.as_deref(),
+        churn_fetch,
+        diff_index,
+    );
 
     let t = Instant::now();
     let (mut targets, target_thresholds) = compute_targets(
@@ -943,6 +935,38 @@ fn apply_health_baseline_and_top(
         findings.truncate(top);
     }
     Ok(loaded_baseline)
+}
+
+fn compute_filtered_hotspots(
+    opts: &HealthOptions<'_>,
+    config: &ResolvedConfig,
+    file_scores_slice: &[FileHealthScore],
+    ignore_set: &globset::GlobSet,
+    ws_roots: Option<&[std::path::PathBuf]>,
+    churn_fetch: Option<hotspots::ChurnFetchResult>,
+    diff_index: Option<&crate::report::ci::diff_filter::DiffIndex>,
+) -> (Vec<HotspotEntry>, Option<HotspotSummary>, f64) {
+    let t = Instant::now();
+    let (mut hotspots, hotspot_summary) = if let Some(churn_data) = churn_fetch {
+        compute_hotspots(
+            opts,
+            config,
+            file_scores_slice,
+            ignore_set,
+            ws_roots,
+            churn_data,
+        )
+    } else {
+        (Vec::new(), None)
+    };
+    if let Some(diff_index) = diff_index {
+        filter_hotspots_by_diff(&mut hotspots, diff_index, &config.root);
+    }
+    (
+        hotspots,
+        hotspot_summary,
+        t.elapsed().as_secs_f64() * 1000.0,
+    )
 }
 
 /// Drop complexity findings whose function body span does NOT overlap any
