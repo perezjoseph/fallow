@@ -520,35 +520,15 @@ fn execute_health_inner(
     };
     let (mut vital_signs, mut counts) = compute_vital_signs_and_counts(&vital_signs_input);
 
-    let t = Instant::now();
-    if opts.score {
-        let scoped_files = filter_files_to_paths(&files, &candidate_paths);
-        let dupes_report = if opts.no_cache {
-            fallow_core::duplicates::find_duplicates(
-                &config.root,
-                &scoped_files,
-                &config.duplicates,
-            )
-        } else {
-            fallow_core::duplicates::find_duplicates_cached(
-                &config.root,
-                &scoped_files,
-                &config.duplicates,
-                &config.cache_dir,
-            )
-        };
-        apply_duplication_metrics(&mut vital_signs, &mut counts, &dupes_report);
-    }
-    let duplication_ms = t.elapsed().as_secs_f64() * 1000.0;
-
-    let health_score = if opts.score {
-        Some(vital_signs::compute_health_score(
-            &vital_signs,
-            total_files_scoped,
-        ))
-    } else {
-        None
-    };
+    let (health_score, duplication_ms) = compute_health_score_metrics(
+        opts,
+        &config,
+        &files,
+        &candidate_paths,
+        &mut vital_signs,
+        &mut counts,
+        total_files_scoped,
+    );
 
     let large_function_input = LargeFunctionInput {
         vital_signs: &vital_signs,
@@ -1024,6 +1004,41 @@ fn save_health_baseline_if_requested(
         )?;
     }
     Ok(())
+}
+
+fn compute_health_score_metrics(
+    opts: &HealthOptions<'_>,
+    config: &ResolvedConfig,
+    files: &[fallow_types::discover::DiscoveredFile],
+    candidate_paths: &rustc_hash::FxHashSet<std::path::PathBuf>,
+    vital_signs: &mut crate::health_types::VitalSigns,
+    counts: &mut crate::health_types::VitalSignsCounts,
+    total_files_scoped: usize,
+) -> (Option<HealthScore>, f64) {
+    let t = Instant::now();
+    if opts.score {
+        let scoped_files = filter_files_to_paths(files, candidate_paths);
+        let dupes_report = if opts.no_cache {
+            fallow_core::duplicates::find_duplicates(
+                &config.root,
+                &scoped_files,
+                &config.duplicates,
+            )
+        } else {
+            fallow_core::duplicates::find_duplicates_cached(
+                &config.root,
+                &scoped_files,
+                &config.duplicates,
+                &config.cache_dir,
+            )
+        };
+        apply_duplication_metrics(vital_signs, counts, &dupes_report);
+    }
+    let duplication_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let health_score = opts
+        .score
+        .then(|| vital_signs::compute_health_score(vital_signs, total_files_scoped));
+    (health_score, duplication_ms)
 }
 
 /// Drop complexity findings whose function body span does NOT overlap any
