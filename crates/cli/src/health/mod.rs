@@ -372,22 +372,13 @@ fn execute_health_inner(
         || opts.force_full
         || enforce_crap;
     let needs_analysis_output = needs_file_scores || opts.runtime_coverage.is_some();
-    #[expect(
-        deprecated,
-        reason = "ADR-008 deprecates fallow_core::analyze_with_parse_result externally; health still uses the workspace path dependency"
-    )]
-    let mut shared_analysis_output = if needs_analysis_output {
-        if let Some(pre) = pre_computed_analysis {
-            Some(pre)
-        } else {
-            Some(
-                fallow_core::analyze_with_parse_result(&config, &modules)
-                    .map_err(|e| emit_error(&format!("analysis failed: {e}"), 2, opts.output))?,
-            )
-        }
-    } else {
-        None
-    };
+    let mut shared_analysis_output = prepare_shared_analysis_output(
+        opts,
+        &config,
+        &modules,
+        pre_computed_analysis,
+        needs_analysis_output,
+    )?;
 
     let mut runtime_coverage = if let Some(ref production_options) = opts.runtime_coverage {
         let analysis_output = shared_analysis_output
@@ -848,6 +839,28 @@ fn load_health_coverage(
         );
     }
     Ok(scoring::load_istanbul_coverage(&auto_path, opts.coverage_root, Some(&config.root)).ok())
+}
+
+#[expect(
+    deprecated,
+    reason = "ADR-008 deprecates fallow_core::analyze_with_parse_result externally; health still uses the workspace path dependency"
+)]
+fn prepare_shared_analysis_output(
+    opts: &HealthOptions<'_>,
+    config: &ResolvedConfig,
+    modules: &[fallow_core::extract::ModuleInfo],
+    pre_computed: Option<fallow_core::AnalysisOutput>,
+    needed: bool,
+) -> Result<Option<fallow_core::AnalysisOutput>, ExitCode> {
+    if !needed {
+        return Ok(None);
+    }
+    if let Some(pre) = pre_computed {
+        return Ok(Some(pre));
+    }
+    fallow_core::analyze_with_parse_result(config, modules)
+        .map(Some)
+        .map_err(|e| emit_error(&format!("analysis failed: {e}"), 2, opts.output))
 }
 
 /// Drop complexity findings whose function body span does NOT overlap any
