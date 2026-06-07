@@ -476,28 +476,22 @@ fn execute_health_inner(
         diff_index,
     );
 
-    if let Some(report) = runtime_coverage.as_mut() {
-        let ctx = RuntimeCoverageFilterContext::new(&config.root)
-            .with_baseline(loaded_baseline.as_ref())
-            .with_top(opts.top)
-            .with_changed_files(changed_files.as_ref())
-            .with_diff_index(diff_index);
-        apply_runtime_coverage_filters(report, &ctx);
-    }
+    filter_runtime_coverage_report(
+        opts,
+        &config,
+        runtime_coverage.as_mut(),
+        loaded_baseline.as_ref(),
+        changed_files.as_ref(),
+        diff_index,
+    );
 
-    if let Some(save_path) = opts.save_baseline {
-        save_health_baseline(
-            save_path,
-            &findings,
-            runtime_coverage
-                .as_ref()
-                .map_or(&[], |report| report.findings.as_slice()),
-            &targets,
-            &config.root,
-            opts.quiet,
-            opts.output,
-        )?;
-    }
+    save_health_baseline_if_requested(
+        opts,
+        &config,
+        &findings,
+        runtime_coverage.as_ref(),
+        &targets,
+    )?;
 
     let candidate_paths = collect_candidate_paths(
         &files,
@@ -991,6 +985,45 @@ fn compute_filtered_targets(
         target_thresholds,
         t.elapsed().as_secs_f64() * 1000.0,
     )
+}
+
+fn filter_runtime_coverage_report(
+    opts: &HealthOptions<'_>,
+    config: &ResolvedConfig,
+    report: Option<&mut crate::health_types::RuntimeCoverageReport>,
+    loaded_baseline: Option<&HealthBaselineData>,
+    changed_files: Option<&rustc_hash::FxHashSet<std::path::PathBuf>>,
+    diff_index: Option<&crate::report::ci::diff_filter::DiffIndex>,
+) {
+    if let Some(report) = report {
+        let ctx = RuntimeCoverageFilterContext::new(&config.root)
+            .with_baseline(loaded_baseline)
+            .with_top(opts.top)
+            .with_changed_files(changed_files)
+            .with_diff_index(diff_index);
+        apply_runtime_coverage_filters(report, &ctx);
+    }
+}
+
+fn save_health_baseline_if_requested(
+    opts: &HealthOptions<'_>,
+    config: &ResolvedConfig,
+    findings: &[ComplexityViolation],
+    runtime_coverage: Option<&crate::health_types::RuntimeCoverageReport>,
+    targets: &[RefactoringTarget],
+) -> Result<(), ExitCode> {
+    if let Some(save_path) = opts.save_baseline {
+        save_health_baseline(
+            save_path,
+            findings,
+            runtime_coverage.map_or(&[], |report| report.findings.as_slice()),
+            targets,
+            &config.root,
+            opts.quiet,
+            opts.output,
+        )?;
+    }
+    Ok(())
 }
 
 /// Drop complexity findings whose function body span does NOT overlap any
