@@ -816,7 +816,7 @@ mod tests {
             sub: "org_1".to_owned(),
             tid: "tenant_1".to_owned(),
             seats: 5,
-            tier: "team".to_owned(),
+            tier: "pro".to_owned(),
             features: features.iter().map(|s| (*s).to_owned()).collect(),
             iat: 1_700_000_000,
             exp: 1_800_000_000,
@@ -946,7 +946,7 @@ mod tests {
         }
         assert_eq!(value["kind"], "license-status");
         assert_eq!(value["state"], "valid");
-        assert_eq!(value["tier"], "team");
+        assert_eq!(value["tier"], "pro");
         assert_eq!(value["seats"], 5);
         assert_eq!(value["days_until_expiry"], 12);
         assert!(value["days_since_expiry"].is_null());
@@ -993,7 +993,7 @@ mod tests {
         };
         let value = json_value(&status, LicenseKind::Status);
         assert_eq!(value["state"], "expired_warning");
-        assert_eq!(value["tier"], "team");
+        assert_eq!(value["tier"], "pro");
         assert_eq!(value["days_since_expiry"], 3);
         // Warning window still permits the feature.
         assert_eq!(value["runtime_coverage_enabled"], true);
@@ -1029,7 +1029,7 @@ mod tests {
         let value = json_value(&status, LicenseKind::Status);
 
         assert_eq!(value["state"], "expired_watermark");
-        assert_eq!(value["tier"], "team");
+        assert_eq!(value["tier"], "pro");
         assert_eq!(value["seats"], 5);
         assert_eq!(value["days_since_expiry"], 12);
         assert_eq!(value["runtime_coverage_enabled"], true);

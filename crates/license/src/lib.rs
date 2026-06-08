@@ -73,7 +73,10 @@ pub struct LicenseClaims {
     pub tid: String,
     /// Number of seats licensed.
     pub seats: u32,
-    /// Tier string: `team`, `enterprise`, `trial`, `founding`.
+    /// Tier string emitted by fallow-cloud: `pro`, `enterprise`, `trial`, `founding`.
+    /// (`team` is the legacy name for `pro`; the server now emits `pro`.) The
+    /// value is informational only: capability gating is on `features`, never on
+    /// this string, so any tier value is tolerated.
     pub tier: String,
     /// Feature flags. Modeled as strings on the wire for forward-compat;
     /// callers convert to [`Feature`] for matching.
@@ -613,7 +616,7 @@ mod tests {
             sub: "org_test".into(),
             tid: "tenant_test".into(),
             seats: 5,
-            tier: "team".into(),
+            tier: "pro".into(),
             features: vec!["runtime_coverage".into()],
             iat: 1_700_000_000,
             exp,
@@ -758,7 +761,7 @@ mod tests {
             "sub": "org_test",
             "tid": "tenant_test",
             "seats": 5,
-            "tier": "team",
+            "tier": "pro",
             "features": ["runtime_coverage"],
             "iat": 1_700_000_000,
             "exp": 2_000_000_000_i64,
@@ -773,7 +776,7 @@ mod tests {
             "sub": "org_test",
             "tid": "tenant_test",
             "seats": 5,
-            "tier": "team",
+            "tier": "pro",
             "features": ["runtime_coverage"],
             "iat": 1_700_000_000,
             "exp": 2_000_000_000_i64,
@@ -864,7 +867,7 @@ mod tests {
             sub: "org_test".into(),
             tid: "tenant_test".into(),
             seats: 5,
-            tier: "team".into(),
+            tier: "pro".into(),
             features: vec!["runtime_coverage".into()],
             iat,
             exp,
