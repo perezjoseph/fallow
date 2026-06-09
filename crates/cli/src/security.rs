@@ -1443,9 +1443,9 @@ fn render_sarif(output: &SecurityOutput) -> String {
             { "name": "CWE", "index": 0 }
         ]);
     }
-    // Gate verdict rides as a RUN-level property, never on result severity:
-    // every result stays `level: note` so the candidate framing survives into
-    // GHAS (an `error`-level result reads as a confirmed problem).
+    // Gate verdict rides as a RUN-level property, never on result severity.
+    // Result levels come from candidate review-priority severity and deliberately
+    // avoid `error`, so GHAS does not frame candidates as confirmed problems.
     if let Some(gate) = &output.gate
         && let Ok(gate_value) = serde_json::to_value(gate)
     {

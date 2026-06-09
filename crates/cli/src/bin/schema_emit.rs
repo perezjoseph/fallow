@@ -742,7 +742,7 @@ fn rewrite_fallow_output_definition(definitions: &mut Map<String, Value>) -> Res
         (
             "security",
             "SecurityOutput",
-            "`fallow security --format json`. Required `security_findings` plus\n`unresolved_edge_files`; findings are unverified security candidates.",
+            "`fallow security --format json`. Required `security_findings`,\n`unresolved_edge_files`, and `unresolved_callee_sites`; findings are\nunverified security candidates.",
         ),
         (
             "dead-code",

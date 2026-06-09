@@ -7280,7 +7280,7 @@
           ]
         },
         {
-          "description": "`fallow security --format json`. Required `security_findings` plus\n`unresolved_edge_files`; findings are unverified security candidates.",
+          "description": "`fallow security --format json`. Required `security_findings`,\n`unresolved_edge_files`, and `unresolved_callee_sites`; findings are\nunverified security candidates.",
           "allOf": [
             {
               "$ref": "#/definitions/SecurityOutput"
@@ -10537,7 +10537,7 @@
         "sink",
         "boundary"
       ],
-      "description": "An agent-actionable candidate record on a [`SecurityFinding`]. fallow fills\n`source_kind`, `sink`, and `boundary`. The exploitability IMPACT is\ndeliberately NOT a field: deciding severity / exploitability is the consuming\nagent's job, not fallow's, and a perpetually-null `impact` key would only\ntrain consumers to ignore it. The agent reads this record, then writes its\nown impact verdict downstream."
+      "description": "An agent-actionable candidate record on a [`SecurityFinding`]. fallow fills\n`source_kind`, `sink`, and `boundary`. The exploitability IMPACT is\ndeliberately NOT a field: `severity` on the parent finding is only a\nreview-priority tier, while deciding exploitability remains the consuming\nagent's job. A perpetually-null `impact` key would only train consumers to\nignore it. The agent reads this record, then writes its own impact verdict\ndownstream."
     },
     "SecurityCandidateSink": {
       "type": "object",

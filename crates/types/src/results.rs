@@ -1061,10 +1061,11 @@ pub struct SecurityNetworkContext {
 
 /// An agent-actionable candidate record on a [`SecurityFinding`]. fallow fills
 /// `source_kind`, `sink`, and `boundary`. The exploitability IMPACT is
-/// deliberately NOT a field: deciding severity / exploitability is the consuming
-/// agent's job, not fallow's, and a perpetually-null `impact` key would only
-/// train consumers to ignore it. The agent reads this record, then writes its
-/// own impact verdict downstream.
+/// deliberately NOT a field: `severity` on the parent finding is only a
+/// review-priority tier, while deciding exploitability remains the consuming
+/// agent's job. A perpetually-null `impact` key would only train consumers to
+/// ignore it. The agent reads this record, then writes its own impact verdict
+/// downstream.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct SecurityCandidate {
