@@ -539,11 +539,7 @@ fn execute_health_inner(
         diff_index,
     );
 
-    let active_coverage_model = if istanbul_coverage.is_some() {
-        Some(crate::health_types::CoverageModel::Istanbul)
-    } else {
-        Some(crate::health_types::CoverageModel::StaticEstimated)
-    };
+    let active_coverage_model = active_health_coverage_model(istanbul_coverage.is_some());
 
     if let Some(ref snapshot_path) = opts.save_snapshot {
         save_snapshot(SnapshotInput {
@@ -728,6 +724,16 @@ fn build_optional_health_grouping(
 ) -> Option<HealthGrouping> {
     resolver.map(|resolver| {
         grouping::build_health_grouping(resolver, project_root, candidate_paths, input)
+    })
+}
+
+fn active_health_coverage_model(
+    has_istanbul_coverage: bool,
+) -> Option<crate::health_types::CoverageModel> {
+    Some(if has_istanbul_coverage {
+        crate::health_types::CoverageModel::Istanbul
+    } else {
+        crate::health_types::CoverageModel::StaticEstimated
     })
 }
 
