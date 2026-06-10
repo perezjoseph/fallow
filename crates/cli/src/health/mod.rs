@@ -648,19 +648,7 @@ fn execute_health_inner(
         None
     };
 
-    // Report result volume to telemetry from the real result, independent of
-    // the exit-code gate. Coverage gaps are a section-level signal today, so
-    // they mark an unknown non-empty bucket until that report carries a stable
-    // finding count.
-    if coverage_gaps_has_findings && report.findings.is_empty() {
-        crate::telemetry::note_findings_present(true);
-    } else {
-        crate::telemetry::note_result_count(report.findings.len());
-    }
-    crate::telemetry::note_analysis_scale(
-        Some(report.summary.files_analyzed),
-        Some(report.summary.functions_analyzed),
-    );
+    record_health_telemetry(&report, coverage_gaps_has_findings);
 
     Ok(HealthResult {
         report,
@@ -672,6 +660,18 @@ fn execute_health_inner(
         coverage_gaps_has_findings,
         should_fail_on_coverage_gaps: enforce_coverage_gaps,
     })
+}
+
+fn record_health_telemetry(report: &HealthReport, coverage_gaps_has_findings: bool) {
+    if coverage_gaps_has_findings && report.findings.is_empty() {
+        crate::telemetry::note_findings_present(true);
+    } else {
+        crate::telemetry::note_result_count(report.findings.len());
+    }
+    crate::telemetry::note_analysis_scale(
+        Some(report.summary.files_analyzed),
+        Some(report.summary.functions_analyzed),
+    );
 }
 
 fn build_health_action_context(
