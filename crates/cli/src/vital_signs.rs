@@ -664,6 +664,33 @@ pub fn load_snapshots(root: &Path) -> Vec<VitalSignsSnapshot> {
 /// Tolerance for treating a metric delta as "stable" rather than improving/declining.
 const TREND_TOLERANCE: f64 = 0.5;
 
+fn trend_point_from_snapshot(prev: &VitalSignsSnapshot) -> TrendPoint {
+    TrendPoint {
+        timestamp: prev.timestamp.clone(),
+        git_sha: prev.git_sha.clone(),
+        score: prev.score,
+        grade: prev.grade.clone(),
+        coverage_model: prev.coverage_model.clone(),
+        snapshot_schema_version: Some(prev.snapshot_schema_version),
+    }
+}
+
+fn overall_trend_direction(metrics: &[TrendMetric]) -> TrendDirection {
+    let (improving, declining) = metrics.iter().fold((0usize, 0usize), |(imp, dec), metric| {
+        match metric.direction {
+            TrendDirection::Improving => (imp + 1, dec),
+            TrendDirection::Declining => (imp, dec + 1),
+            TrendDirection::Stable => (imp, dec),
+        }
+    });
+
+    match improving.cmp(&declining) {
+        std::cmp::Ordering::Greater => TrendDirection::Improving,
+        std::cmp::Ordering::Less => TrendDirection::Declining,
+        std::cmp::Ordering::Equal => TrendDirection::Stable,
+    }
+}
+
 /// Compute a trend comparison between the current run and the most recent snapshot.
 ///
 /// Uses the stored `score` field from the snapshot (never re-derives it).
@@ -680,14 +707,7 @@ pub fn compute_trend(
 ) -> Option<HealthTrend> {
     let prev = snapshots.last()?;
 
-    let compared_to = TrendPoint {
-        timestamp: prev.timestamp.clone(),
-        git_sha: prev.git_sha.clone(),
-        score: prev.score,
-        grade: prev.grade.clone(),
-        coverage_model: prev.coverage_model.clone(),
-        snapshot_schema_version: Some(prev.snapshot_schema_version),
-    };
+    let compared_to = trend_point_from_snapshot(prev);
 
     let mut metrics = Vec::new();
 
@@ -873,19 +893,7 @@ pub fn compute_trend(
         }));
     }
 
-    let (improving, declining) =
-        metrics
-            .iter()
-            .fold((0usize, 0usize), |(imp, dec), m| match m.direction {
-                TrendDirection::Improving => (imp + 1, dec),
-                TrendDirection::Declining => (imp, dec + 1),
-                TrendDirection::Stable => (imp, dec),
-            });
-    let overall_direction = match improving.cmp(&declining) {
-        std::cmp::Ordering::Greater => TrendDirection::Improving,
-        std::cmp::Ordering::Less => TrendDirection::Declining,
-        std::cmp::Ordering::Equal => TrendDirection::Stable,
-    };
+    let overall_direction = overall_trend_direction(&metrics);
 
     Some(HealthTrend {
         compared_to,
