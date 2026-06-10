@@ -8,7 +8,10 @@ use fallow_core::results::AnalysisResults;
 use super::ci::{fingerprint, severity};
 use super::grouping::{self, OwnershipResolver};
 use super::{emit_json, normalize_uri, relative_path};
-use crate::health_types::{ExceededThreshold, HealthReport};
+use crate::health_types::{
+    ComplexityViolation, CoverageIntelligenceFinding, ExceededThreshold, HealthReport,
+    RuntimeCoverageFinding, UntestedExportFinding, UntestedFileFinding,
+};
 use crate::output_envelope::{
     CodeClimateIssue, CodeClimateIssueKind, CodeClimateLines, CodeClimateLocation,
     CodeClimateSeverity,
@@ -79,6 +82,237 @@ fn coverage_intelligence_check_name(
         crate::health_types::CoverageIntelligenceRecommendation::RefactorCarefullyKeepBehavior => {
             "fallow/coverage-intelligence-refactor"
         }
+    }
+}
+
+struct HealthCodeClimateContext<'a> {
+    root: &'a Path,
+    cyc_t: u16,
+    cog_t: u16,
+    crap_t: f64,
+}
+
+impl HealthCodeClimateContext<'_> {
+    fn complexity_issue(&self, finding: &ComplexityViolation) -> CodeClimateIssue {
+        let path = cc_path(&finding.path, self.root);
+        let check_name = complexity_check_name(finding);
+        let line_str = finding.line.to_string();
+        let fp = fingerprint_hash(&[check_name, &path, &line_str, &finding.name]);
+        cc_issue(
+            check_name,
+            &self.complexity_description(finding),
+            health_finding_severity(finding.severity),
+            "Complexity",
+            &path,
+            Some(finding.line),
+            &fp,
+        )
+    }
+
+    fn complexity_description(&self, finding: &ComplexityViolation) -> String {
+        match finding.exceeded {
+            ExceededThreshold::Both => format!(
+                "'{}' has cyclomatic complexity {} (threshold: {}) and cognitive complexity {} (threshold: {})",
+                finding.name, finding.cyclomatic, self.cyc_t, finding.cognitive, self.cog_t
+            ),
+            ExceededThreshold::Cyclomatic => format!(
+                "'{}' has cyclomatic complexity {} (threshold: {})",
+                finding.name, finding.cyclomatic, self.cyc_t
+            ),
+            ExceededThreshold::Cognitive => format!(
+                "'{}' has cognitive complexity {} (threshold: {})",
+                finding.name, finding.cognitive, self.cog_t
+            ),
+            ExceededThreshold::Crap
+            | ExceededThreshold::CyclomaticCrap
+            | ExceededThreshold::CognitiveCrap
+            | ExceededThreshold::All => {
+                let crap = finding.crap.unwrap_or(0.0);
+                let coverage = finding
+                    .coverage_pct
+                    .map(|pct| format!(", coverage {pct:.0}%"))
+                    .unwrap_or_default();
+                format!(
+                    "'{}' has CRAP score {crap:.1} (threshold: {:.1}, cyclomatic {}{coverage})",
+                    finding.name, self.crap_t, finding.cyclomatic,
+                )
+            }
+        }
+    }
+
+    fn runtime_coverage_issue(&self, finding: &RuntimeCoverageFinding) -> CodeClimateIssue {
+        let path = cc_path(&finding.path, self.root);
+        let check_name = runtime_coverage_check_name(finding.verdict);
+        let invocations_hint = finding.invocations.map_or_else(
+            || "untracked".to_owned(),
+            |hits| format!("{hits} invocations"),
+        );
+        let description = format!(
+            "'{}' runtime coverage verdict: {} ({})",
+            finding.function,
+            finding.verdict.human_label(),
+            invocations_hint,
+        );
+        let fp = fingerprint_hash(&[
+            check_name,
+            &path,
+            &finding.line.to_string(),
+            &finding.function,
+        ]);
+        cc_issue(
+            check_name,
+            &description,
+            runtime_coverage_severity(finding.verdict),
+            "Bug Risk",
+            &path,
+            Some(finding.line),
+            &fp,
+        )
+    }
+
+    fn coverage_intelligence_issue(
+        &self,
+        finding: &CoverageIntelligenceFinding,
+    ) -> Option<CodeClimateIssue> {
+        let severity = coverage_intelligence_severity(finding.verdict)?;
+        let path = cc_path(&finding.path, self.root);
+        let check_name = coverage_intelligence_check_name(finding.recommendation);
+        let identity = finding.identity.as_deref().unwrap_or("code");
+        let description = format!(
+            "'{}' coverage intelligence verdict: {} ({})",
+            identity, finding.verdict, finding.recommendation,
+        );
+        let fp = fingerprint_hash(&[
+            check_name,
+            &path,
+            &finding.line.to_string(),
+            identity,
+            &finding.id,
+        ]);
+        Some(cc_issue(
+            check_name,
+            &description,
+            severity,
+            "Bug Risk",
+            &path,
+            Some(finding.line),
+            &fp,
+        ))
+    }
+
+    fn untested_file_issue(&self, item: &UntestedFileFinding) -> CodeClimateIssue {
+        let path = cc_path(&item.file.path, self.root);
+        let description = format!(
+            "File is runtime-reachable but has no test dependency path ({} value export{})",
+            item.file.value_export_count,
+            if item.file.value_export_count == 1 {
+                ""
+            } else {
+                "s"
+            },
+        );
+        let fp = fingerprint_hash(&["fallow/untested-file", &path]);
+        cc_issue(
+            "fallow/untested-file",
+            &description,
+            CodeClimateSeverity::Minor,
+            "Coverage",
+            &path,
+            None,
+            &fp,
+        )
+    }
+
+    fn untested_export_issue(&self, item: &UntestedExportFinding) -> CodeClimateIssue {
+        let path = cc_path(&item.export.path, self.root);
+        let description = format!(
+            "Export '{}' is runtime-reachable but never referenced by test-reachable modules",
+            item.export.export_name
+        );
+        let line_str = item.export.line.to_string();
+        let fp = fingerprint_hash(&[
+            "fallow/untested-export",
+            &path,
+            &line_str,
+            &item.export.export_name,
+        ]);
+        cc_issue(
+            "fallow/untested-export",
+            &description,
+            CodeClimateSeverity::Minor,
+            "Coverage",
+            &path,
+            Some(item.export.line),
+            &fp,
+        )
+    }
+}
+
+const fn complexity_check_name(finding: &ComplexityViolation) -> &'static str {
+    match finding.exceeded {
+        ExceededThreshold::Both => "fallow/high-complexity",
+        ExceededThreshold::Cyclomatic => "fallow/high-cyclomatic-complexity",
+        ExceededThreshold::Cognitive => "fallow/high-cognitive-complexity",
+        ExceededThreshold::Crap
+        | ExceededThreshold::CyclomaticCrap
+        | ExceededThreshold::CognitiveCrap
+        | ExceededThreshold::All => "fallow/high-crap-score",
+    }
+}
+
+const fn health_finding_severity(
+    severity: crate::health_types::FindingSeverity,
+) -> CodeClimateSeverity {
+    match severity {
+        crate::health_types::FindingSeverity::Critical => CodeClimateSeverity::Critical,
+        crate::health_types::FindingSeverity::High => CodeClimateSeverity::Major,
+        crate::health_types::FindingSeverity::Moderate => CodeClimateSeverity::Minor,
+    }
+}
+
+const fn runtime_coverage_check_name(
+    verdict: crate::health_types::RuntimeCoverageVerdict,
+) -> &'static str {
+    match verdict {
+        crate::health_types::RuntimeCoverageVerdict::SafeToDelete => {
+            "fallow/runtime-safe-to-delete"
+        }
+        crate::health_types::RuntimeCoverageVerdict::ReviewRequired => {
+            "fallow/runtime-review-required"
+        }
+        crate::health_types::RuntimeCoverageVerdict::LowTraffic => "fallow/runtime-low-traffic",
+        crate::health_types::RuntimeCoverageVerdict::CoverageUnavailable => {
+            "fallow/runtime-coverage-unavailable"
+        }
+        crate::health_types::RuntimeCoverageVerdict::Active
+        | crate::health_types::RuntimeCoverageVerdict::Unknown => "fallow/runtime-coverage",
+    }
+}
+
+const fn runtime_coverage_severity(
+    verdict: crate::health_types::RuntimeCoverageVerdict,
+) -> CodeClimateSeverity {
+    match verdict {
+        crate::health_types::RuntimeCoverageVerdict::SafeToDelete => CodeClimateSeverity::Critical,
+        crate::health_types::RuntimeCoverageVerdict::ReviewRequired => CodeClimateSeverity::Major,
+        _ => CodeClimateSeverity::Minor,
+    }
+}
+
+const fn coverage_intelligence_severity(
+    verdict: crate::health_types::CoverageIntelligenceVerdict,
+) -> Option<CodeClimateSeverity> {
+    match verdict {
+        crate::health_types::CoverageIntelligenceVerdict::RiskyChangeDetected
+        | crate::health_types::CoverageIntelligenceVerdict::HighConfidenceDelete => {
+            Some(CodeClimateSeverity::Major)
+        }
+        crate::health_types::CoverageIntelligenceVerdict::ReviewRequired
+        | crate::health_types::CoverageIntelligenceVerdict::RefactorCarefully => {
+            Some(CodeClimateSeverity::Minor)
+        }
+        crate::health_types::CoverageIntelligenceVerdict::Clean
+        | crate::health_types::CoverageIntelligenceVerdict::Unknown => None,
     }
 }
 
@@ -1126,218 +1360,40 @@ pub(super) fn print_grouped_codeclimate(
 
 /// Build CodeClimate JSON array from health/complexity analysis results.
 #[must_use]
-#[expect(
-    clippy::too_many_lines,
-    reason = "CRAP adds a fourth exceeded-threshold branch plus its description; splitting the dispatch table would fragment the mapping."
-)]
 pub fn build_health_codeclimate(report: &HealthReport, root: &Path) -> Vec<CodeClimateIssue> {
     let mut issues = Vec::new();
-
-    let cyc_t = report.summary.max_cyclomatic_threshold;
-    let cog_t = report.summary.max_cognitive_threshold;
-    let crap_t = report.summary.max_crap_threshold;
+    let ctx = HealthCodeClimateContext {
+        root,
+        cyc_t: report.summary.max_cyclomatic_threshold,
+        cog_t: report.summary.max_cognitive_threshold,
+        crap_t: report.summary.max_crap_threshold,
+    };
 
     for finding in &report.findings {
-        let path = cc_path(&finding.path, root);
-        let description = match finding.exceeded {
-            ExceededThreshold::Both => format!(
-                "'{}' has cyclomatic complexity {} (threshold: {}) and cognitive complexity {} (threshold: {})",
-                finding.name, finding.cyclomatic, cyc_t, finding.cognitive, cog_t
-            ),
-            ExceededThreshold::Cyclomatic => format!(
-                "'{}' has cyclomatic complexity {} (threshold: {})",
-                finding.name, finding.cyclomatic, cyc_t
-            ),
-            ExceededThreshold::Cognitive => format!(
-                "'{}' has cognitive complexity {} (threshold: {})",
-                finding.name, finding.cognitive, cog_t
-            ),
-            ExceededThreshold::Crap
-            | ExceededThreshold::CyclomaticCrap
-            | ExceededThreshold::CognitiveCrap
-            | ExceededThreshold::All => {
-                let crap = finding.crap.unwrap_or(0.0);
-                let coverage = finding
-                    .coverage_pct
-                    .map(|pct| format!(", coverage {pct:.0}%"))
-                    .unwrap_or_default();
-                format!(
-                    "'{}' has CRAP score {crap:.1} (threshold: {crap_t:.1}, cyclomatic {}{coverage})",
-                    finding.name, finding.cyclomatic,
-                )
-            }
-        };
-        let check_name = match finding.exceeded {
-            ExceededThreshold::Both => "fallow/high-complexity",
-            ExceededThreshold::Cyclomatic => "fallow/high-cyclomatic-complexity",
-            ExceededThreshold::Cognitive => "fallow/high-cognitive-complexity",
-            ExceededThreshold::Crap
-            | ExceededThreshold::CyclomaticCrap
-            | ExceededThreshold::CognitiveCrap
-            | ExceededThreshold::All => "fallow/high-crap-score",
-        };
-        let severity = match finding.severity {
-            crate::health_types::FindingSeverity::Critical => CodeClimateSeverity::Critical,
-            crate::health_types::FindingSeverity::High => CodeClimateSeverity::Major,
-            crate::health_types::FindingSeverity::Moderate => CodeClimateSeverity::Minor,
-        };
-        let line_str = finding.line.to_string();
-        let fp = fingerprint_hash(&[check_name, &path, &line_str, &finding.name]);
-        issues.push(cc_issue(
-            check_name,
-            &description,
-            severity,
-            "Complexity",
-            &path,
-            Some(finding.line),
-            &fp,
-        ));
+        issues.push(ctx.complexity_issue(finding));
     }
 
     if let Some(ref production) = report.runtime_coverage {
         for finding in &production.findings {
-            let path = cc_path(&finding.path, root);
-            let check_name = match finding.verdict {
-                crate::health_types::RuntimeCoverageVerdict::SafeToDelete => {
-                    "fallow/runtime-safe-to-delete"
-                }
-                crate::health_types::RuntimeCoverageVerdict::ReviewRequired => {
-                    "fallow/runtime-review-required"
-                }
-                crate::health_types::RuntimeCoverageVerdict::LowTraffic => {
-                    "fallow/runtime-low-traffic"
-                }
-                crate::health_types::RuntimeCoverageVerdict::CoverageUnavailable => {
-                    "fallow/runtime-coverage-unavailable"
-                }
-                crate::health_types::RuntimeCoverageVerdict::Active
-                | crate::health_types::RuntimeCoverageVerdict::Unknown => "fallow/runtime-coverage",
-            };
-            let invocations_hint = finding.invocations.map_or_else(
-                || "untracked".to_owned(),
-                |hits| format!("{hits} invocations"),
-            );
-            let description = format!(
-                "'{}' runtime coverage verdict: {} ({})",
-                finding.function,
-                finding.verdict.human_label(),
-                invocations_hint,
-            );
-            let severity = match finding.verdict {
-                crate::health_types::RuntimeCoverageVerdict::SafeToDelete => {
-                    CodeClimateSeverity::Critical
-                }
-                crate::health_types::RuntimeCoverageVerdict::ReviewRequired => {
-                    CodeClimateSeverity::Major
-                }
-                _ => CodeClimateSeverity::Minor,
-            };
-            let fp = fingerprint_hash(&[
-                check_name,
-                &path,
-                &finding.line.to_string(),
-                &finding.function,
-            ]);
-            issues.push(cc_issue(
-                check_name,
-                &description,
-                severity,
-                "Bug Risk",
-                &path,
-                Some(finding.line),
-                &fp,
-            ));
+            issues.push(ctx.runtime_coverage_issue(finding));
         }
     }
 
     if let Some(ref intelligence) = report.coverage_intelligence {
         for finding in &intelligence.findings {
-            let path = cc_path(&finding.path, root);
-            let check_name = coverage_intelligence_check_name(finding.recommendation);
-            let identity = finding.identity.as_deref().unwrap_or("code");
-            let description = format!(
-                "'{}' coverage intelligence verdict: {} ({})",
-                identity, finding.verdict, finding.recommendation,
-            );
-            let severity = match finding.verdict {
-                crate::health_types::CoverageIntelligenceVerdict::RiskyChangeDetected
-                | crate::health_types::CoverageIntelligenceVerdict::HighConfidenceDelete => {
-                    CodeClimateSeverity::Major
-                }
-                crate::health_types::CoverageIntelligenceVerdict::ReviewRequired
-                | crate::health_types::CoverageIntelligenceVerdict::RefactorCarefully => {
-                    CodeClimateSeverity::Minor
-                }
-                crate::health_types::CoverageIntelligenceVerdict::Clean
-                | crate::health_types::CoverageIntelligenceVerdict::Unknown => {
-                    continue;
-                }
-            };
-            let fp = fingerprint_hash(&[
-                check_name,
-                &path,
-                &finding.line.to_string(),
-                identity,
-                &finding.id,
-            ]);
-            issues.push(cc_issue(
-                check_name,
-                &description,
-                severity,
-                "Bug Risk",
-                &path,
-                Some(finding.line),
-                &fp,
-            ));
+            if let Some(issue) = ctx.coverage_intelligence_issue(finding) {
+                issues.push(issue);
+            }
         }
     }
 
     if let Some(ref gaps) = report.coverage_gaps {
         for item in &gaps.files {
-            let path = cc_path(&item.file.path, root);
-            let description = format!(
-                "File is runtime-reachable but has no test dependency path ({} value export{})",
-                item.file.value_export_count,
-                if item.file.value_export_count == 1 {
-                    ""
-                } else {
-                    "s"
-                },
-            );
-            let fp = fingerprint_hash(&["fallow/untested-file", &path]);
-            issues.push(cc_issue(
-                "fallow/untested-file",
-                &description,
-                CodeClimateSeverity::Minor,
-                "Coverage",
-                &path,
-                None,
-                &fp,
-            ));
+            issues.push(ctx.untested_file_issue(item));
         }
 
         for item in &gaps.exports {
-            let path = cc_path(&item.export.path, root);
-            let description = format!(
-                "Export '{}' is runtime-reachable but never referenced by test-reachable modules",
-                item.export.export_name
-            );
-            let line_str = item.export.line.to_string();
-            let fp = fingerprint_hash(&[
-                "fallow/untested-export",
-                &path,
-                &line_str,
-                &item.export.export_name,
-            ]);
-            issues.push(cc_issue(
-                "fallow/untested-export",
-                &description,
-                CodeClimateSeverity::Minor,
-                "Coverage",
-                &path,
-                Some(item.export.line),
-                &fp,
-            ));
+            issues.push(ctx.untested_export_issue(item));
         }
     }
 
