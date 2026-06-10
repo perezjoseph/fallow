@@ -547,6 +547,185 @@ fn credit_angular_token_chain_member<'a>(
     }
 }
 
+fn build_angular_template_refs(
+    resolved_modules: &[ResolvedModule],
+) -> FxHashMap<FileId, Vec<&str>> {
+    resolved_modules
+        .iter()
+        .filter_map(|module| {
+            let refs: Vec<&str> = module
+                .member_accesses
+                .iter()
+                .filter(|access| access.object == ANGULAR_TPL_SENTINEL)
+                .map(|access| access.member.as_str())
+                .collect();
+            if refs.is_empty() {
+                None
+            } else {
+                Some((module.file_id, refs))
+            }
+        })
+        .collect()
+}
+
+fn build_angular_template_chain_accesses(
+    resolved_modules: &[ResolvedModule],
+) -> FxHashMap<FileId, Vec<(&str, &str)>> {
+    resolved_modules
+        .iter()
+        .filter_map(|module| {
+            if !module
+                .member_accesses
+                .iter()
+                .any(|access| access.object == ANGULAR_TPL_SENTINEL)
+            {
+                return None;
+            }
+            let chains: Vec<(&str, &str)> = module
+                .member_accesses
+                .iter()
+                .filter(|access| {
+                    access.object != ANGULAR_TPL_SENTINEL
+                        && access.object != "this"
+                        && !access.object.starts_with(INSTANCE_EXPORT_SENTINEL)
+                        && !access.object.starts_with(FACTORY_CALL_SENTINEL)
+                        && !access.object.starts_with(FLUENT_CHAIN_SENTINEL)
+                        && !access.object.starts_with(FLUENT_CHAIN_NEW_SENTINEL)
+                })
+                .map(|access| (access.object.as_str(), access.member.as_str()))
+                .collect();
+            if chains.is_empty() {
+                None
+            } else {
+                Some((module.file_id, chains))
+            }
+        })
+        .collect()
+}
+
+struct AngularTemplateRefContext<'a, 'b> {
+    refs: &'b FxHashMap<FileId, Vec<&'a str>>,
+    self_accessed_members: &'b mut FxHashMap<FileId, FxHashSet<String>>,
+}
+
+impl AngularTemplateRefContext<'_, '_> {
+    fn propagate(&mut self, resolved_modules: &[ResolvedModule]) {
+        if self.refs.is_empty() {
+            return;
+        }
+
+        for resolved in resolved_modules {
+            if let Some(refs) = self.refs.get(&resolved.file_id) {
+                let entry = self
+                    .self_accessed_members
+                    .entry(resolved.file_id)
+                    .or_default();
+                for &ref_name in refs {
+                    entry.insert(ref_name.to_string());
+                }
+            }
+            for import in resolved.all_resolved_imports() {
+                if let Some(target_id) = import.target.internal_file_id()
+                    && let Some(refs) = self.refs.get(&target_id)
+                {
+                    let entry = self
+                        .self_accessed_members
+                        .entry(resolved.file_id)
+                        .or_default();
+                    for &ref_name in refs {
+                        entry.insert(ref_name.to_string());
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn component_instance_bindings(
+    class_heritage: &[fallow_types::extract::ClassHeritageInfo],
+) -> FxHashMap<&str, &str> {
+    class_heritage
+        .iter()
+        .flat_map(|heritage| {
+            heritage
+                .instance_bindings
+                .iter()
+                .map(|(local, ty)| (local.as_str(), ty.as_str()))
+        })
+        .collect()
+}
+
+struct AngularTemplateChainContext<'a, 'b> {
+    graph: &'b ModuleGraph,
+    class_heritage_by_file: &'b FxHashMap<FileId, &'a [fallow_types::extract::ClassHeritageInfo]>,
+    chain_accesses: &'b FxHashMap<FileId, Vec<(&'b str, &'b str)>>,
+    token_to_interface: &'b FxHashMap<ExportKey, &'a str>,
+    implementers_by_name: &'b FxHashMap<&'a str, Vec<ExportKey>>,
+    accessed_members: &'b mut FxHashMap<ExportKey, FxHashSet<String>>,
+}
+
+struct AngularTemplateComponentContext<'a, 'b> {
+    component_bindings: FxHashMap<&'a str, &'a str>,
+    local_to_export_keys: FxHashMap<&'b str, Vec<ExportKey>>,
+}
+
+impl<'a> AngularTemplateChainContext<'a, '_> {
+    fn credit_members(
+        &mut self,
+        chains: &[(&str, &str)],
+        component: &AngularTemplateComponentContext<'a, '_>,
+    ) {
+        for (object, member) in chains {
+            let Some(type_name) = component.component_bindings.get(object) else {
+                continue;
+            };
+            credit_angular_token_chain_member(
+                self.graph,
+                type_name,
+                member,
+                &component.local_to_export_keys,
+                self.token_to_interface,
+                self.implementers_by_name,
+                self.accessed_members,
+            );
+        }
+    }
+
+    fn propagate(&mut self, resolved_modules: &[ResolvedModule]) {
+        if self.chain_accesses.is_empty() {
+            return;
+        }
+
+        for resolved in resolved_modules {
+            let Some(class_heritage) = self.class_heritage_by_file.get(&resolved.file_id) else {
+                continue;
+            };
+            if class_heritage.is_empty() {
+                continue;
+            }
+            let component = AngularTemplateComponentContext {
+                component_bindings: component_instance_bindings(class_heritage),
+                local_to_export_keys: build_local_to_export_keys(resolved),
+            };
+            if component.component_bindings.is_empty() {
+                continue;
+            }
+            if let Some(chains) = self.chain_accesses.get(&resolved.file_id) {
+                self.credit_members(chains, &component);
+            }
+            for import in resolved.all_resolved_imports() {
+                let Some(target_id) = import.target.internal_file_id() else {
+                    continue;
+                };
+                let Some(chains) = self.chain_accesses.get(&target_id) else {
+                    continue;
+                };
+                self.credit_members(chains, &component);
+            }
+        }
+    }
+}
+
 fn entry_point_star_re_export_targets(
     graph: &ModuleGraph,
     public_api_entry_points: &FxHashSet<FileId>,
@@ -1424,135 +1603,22 @@ pub(super) fn find_unused_members_with_public_api_entry_points(
         }
     }
 
-    let angular_tpl_refs: FxHashMap<FileId, Vec<&str>> = resolved_modules
-        .iter()
-        .filter_map(|m| {
-            let refs: Vec<&str> = m
-                .member_accesses
-                .iter()
-                .filter(|a| a.object == ANGULAR_TPL_SENTINEL)
-                .map(|a| a.member.as_str())
-                .collect();
-            if refs.is_empty() {
-                None
-            } else {
-                Some((m.file_id, refs))
-            }
-        })
-        .collect();
-
-    let angular_tpl_chain_accesses: FxHashMap<FileId, Vec<(&str, &str)>> = resolved_modules
-        .iter()
-        .filter_map(|m| {
-            let has_sentinel = m
-                .member_accesses
-                .iter()
-                .any(|a| a.object == ANGULAR_TPL_SENTINEL);
-            if !has_sentinel {
-                return None;
-            }
-            let chains: Vec<(&str, &str)> = m
-                .member_accesses
-                .iter()
-                .filter(|a| {
-                    a.object != ANGULAR_TPL_SENTINEL
-                        && a.object != "this"
-                        && !a.object.starts_with(INSTANCE_EXPORT_SENTINEL)
-                        && !a.object.starts_with(FACTORY_CALL_SENTINEL)
-                        && !a.object.starts_with(FLUENT_CHAIN_SENTINEL)
-                        && !a.object.starts_with(FLUENT_CHAIN_NEW_SENTINEL)
-                })
-                .map(|a| (a.object.as_str(), a.member.as_str()))
-                .collect();
-            if chains.is_empty() {
-                None
-            } else {
-                Some((m.file_id, chains))
-            }
-        })
-        .collect();
-
-    if !angular_tpl_refs.is_empty() {
-        for resolved in resolved_modules {
-            if let Some(refs) = angular_tpl_refs.get(&resolved.file_id) {
-                let entry = self_accessed_members.entry(resolved.file_id).or_default();
-                for &ref_name in refs {
-                    entry.insert(ref_name.to_string());
-                }
-            }
-            for import in resolved.all_resolved_imports() {
-                if let Some(target_id) = import.target.internal_file_id()
-                    && let Some(refs) = angular_tpl_refs.get(&target_id)
-                {
-                    let entry = self_accessed_members.entry(resolved.file_id).or_default();
-                    for &ref_name in refs {
-                        entry.insert(ref_name.to_string());
-                    }
-                }
-            }
-        }
-    }
-
-    if !angular_tpl_chain_accesses.is_empty() {
-        for resolved in resolved_modules {
-            let Some(class_heritage) = class_heritage_by_file.get(&resolved.file_id) else {
-                continue;
-            };
-            if class_heritage.is_empty() {
-                continue;
-            }
-            let component_bindings: FxHashMap<&str, &str> = class_heritage
-                .iter()
-                .flat_map(|h| {
-                    h.instance_bindings
-                        .iter()
-                        .map(|(local, ty)| (local.as_str(), ty.as_str()))
-                })
-                .collect();
-            if component_bindings.is_empty() {
-                continue;
-            }
-            let local_to_export_keys = build_local_to_export_keys(resolved);
-            if let Some(chains) = angular_tpl_chain_accesses.get(&resolved.file_id) {
-                for (object, member) in chains {
-                    let Some(type_name) = component_bindings.get(object) else {
-                        continue;
-                    };
-                    credit_angular_token_chain_member(
-                        graph,
-                        type_name,
-                        member,
-                        &local_to_export_keys,
-                        &token_to_interface,
-                        &implementers_by_name,
-                        &mut accessed_members,
-                    );
-                }
-            }
-            for import in resolved.all_resolved_imports() {
-                let Some(target_id) = import.target.internal_file_id() else {
-                    continue;
-                };
-                let Some(chains) = angular_tpl_chain_accesses.get(&target_id) else {
-                    continue;
-                };
-                for (object, member) in chains {
-                    let Some(type_name) = component_bindings.get(object) else {
-                        continue;
-                    };
-                    credit_angular_token_chain_member(
-                        graph,
-                        type_name,
-                        member,
-                        &local_to_export_keys,
-                        &token_to_interface,
-                        &implementers_by_name,
-                        &mut accessed_members,
-                    );
-                }
-            }
-        }
-    }
+    let angular_tpl_refs = build_angular_template_refs(resolved_modules);
+    let mut angular_ref_context = AngularTemplateRefContext {
+        refs: &angular_tpl_refs,
+        self_accessed_members: &mut self_accessed_members,
+    };
+    angular_ref_context.propagate(resolved_modules);
+    let angular_tpl_chain_accesses = build_angular_template_chain_accesses(resolved_modules);
+    let mut angular_chain_context = AngularTemplateChainContext {
+        graph,
+        class_heritage_by_file: &class_heritage_by_file,
+        chain_accesses: &angular_tpl_chain_accesses,
+        token_to_interface: &token_to_interface,
+        implementers_by_name: &implementers_by_name,
+        accessed_members: &mut accessed_members,
+    };
+    angular_chain_context.propagate(resolved_modules);
 
     let parent_to_children = build_parent_to_children(graph, resolved_modules);
 
