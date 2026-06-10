@@ -174,6 +174,19 @@ fn boundary_call_key(
     )
 }
 
+fn policy_violation_key(
+    item: &fallow_core::results::PolicyViolationFinding,
+    root: &Path,
+) -> String {
+    format!(
+        "policy-violation:{}:{}/{}:{}",
+        relative_key_path(&item.violation.path, root),
+        item.violation.pack,
+        item.violation.rule_id,
+        item.violation.matched
+    )
+}
+
 fn stale_suppression_key(item: &fallow_core::results::StaleSuppression, root: &Path) -> String {
     format!(
         "stale-suppression:{}:{}",
@@ -286,119 +299,293 @@ pub(super) fn dead_code_keys(
         entry_point_summary: _entry_point_summary,
     } = results;
 
-    let mut keys = FxHashSet::default();
-    for item in unused_files {
-        keys.insert(format!(
-            "unused-file:{}",
-            relative_key_path(&item.file.path, root)
-        ));
+    let mut collector = DeadCodeKeyCollector::new(root);
+    collector.add_unused_files(unused_files);
+    collector.add_unused_exports(unused_exports);
+    collector.add_unused_types(unused_types);
+    collector.add_private_type_leaks(private_type_leaks);
+    collector.add_unused_dependencies(unused_dependencies);
+    collector.add_unused_dev_dependencies(unused_dev_dependencies);
+    collector.add_unused_optional_dependencies(unused_optional_dependencies);
+    collector.add_unused_enum_members(unused_enum_members);
+    collector.add_unused_class_members(unused_class_members);
+    collector.add_unresolved_imports(unresolved_imports);
+    collector.add_unlisted_dependencies(unlisted_dependencies);
+    collector.add_duplicate_exports(duplicate_exports);
+    collector.add_type_only_dependencies(type_only_dependencies);
+    collector.add_test_only_dependencies(test_only_dependencies);
+    collector.add_circular_dependencies(circular_dependencies);
+    collector.add_re_export_cycles(re_export_cycles);
+    collector.add_boundary_violations(boundary_violations);
+    collector.add_boundary_coverage_violations(boundary_coverage_violations);
+    collector.add_boundary_call_violations(boundary_call_violations);
+    collector.add_policy_violations(policy_violations);
+    collector.add_stale_suppressions(stale_suppressions);
+    collector.add_unresolved_catalog_references(unresolved_catalog_references);
+    collector.add_unused_catalog_entries(unused_catalog_entries);
+    collector.add_empty_catalog_groups(empty_catalog_groups);
+    collector.add_unused_dependency_overrides(unused_dependency_overrides);
+    collector.add_misconfigured_dependency_overrides(misconfigured_dependency_overrides);
+    collector.into_keys()
+}
+
+struct DeadCodeKeyCollector<'a> {
+    root: &'a Path,
+    keys: FxHashSet<String>,
+}
+
+impl<'a> DeadCodeKeyCollector<'a> {
+    fn new(root: &'a Path) -> Self {
+        Self {
+            root,
+            keys: FxHashSet::default(),
+        }
     }
-    for item in unused_exports {
-        keys.insert(format!(
-            "unused-export:{}:{}",
-            relative_key_path(&item.export.path, root),
-            item.export.export_name
-        ));
+
+    fn into_keys(self) -> FxHashSet<String> {
+        self.keys
     }
-    for item in unused_types {
-        keys.insert(format!(
-            "unused-type:{}:{}",
-            relative_key_path(&item.export.path, root),
-            item.export.export_name
-        ));
+
+    fn insert(&mut self, key: String) {
+        self.keys.insert(key);
     }
-    for item in private_type_leaks {
-        keys.insert(format!(
-            "private-type-leak:{}:{}:{}",
-            relative_key_path(&item.leak.path, root),
-            item.leak.export_name,
-            item.leak.type_name
-        ));
+
+    fn add_unused_files(&mut self, items: &[fallow_core::results::UnusedFileFinding]) {
+        for item in items {
+            self.insert(format!(
+                "unused-file:{}",
+                relative_key_path(&item.file.path, self.root)
+            ));
+        }
     }
-    for item in unused_dependencies
-        .iter()
-        .map(|f| &f.dep)
-        .chain(unused_dev_dependencies.iter().map(|f| &f.dep))
-        .chain(unused_optional_dependencies.iter().map(|f| &f.dep))
-    {
-        keys.insert(unused_dependency_key(item, root));
+
+    fn add_unused_exports(&mut self, items: &[fallow_core::results::UnusedExportFinding]) {
+        for item in items {
+            self.insert(format!(
+                "unused-export:{}:{}",
+                relative_key_path(&item.export.path, self.root),
+                item.export.export_name
+            ));
+        }
     }
-    for item in unused_enum_members {
-        keys.insert(unused_member_key("unused-enum-member", &item.member, root));
+
+    fn add_unused_types(&mut self, items: &[fallow_core::results::UnusedTypeFinding]) {
+        for item in items {
+            self.insert(format!(
+                "unused-type:{}:{}",
+                relative_key_path(&item.export.path, self.root),
+                item.export.export_name
+            ));
+        }
     }
-    for item in unused_class_members {
-        keys.insert(unused_member_key("unused-class-member", &item.member, root));
+
+    fn add_private_type_leaks(&mut self, items: &[fallow_core::results::PrivateTypeLeakFinding]) {
+        for item in items {
+            self.insert(format!(
+                "private-type-leak:{}:{}:{}",
+                relative_key_path(&item.leak.path, self.root),
+                item.leak.export_name,
+                item.leak.type_name
+            ));
+        }
     }
-    for item in unresolved_imports {
-        keys.insert(format!(
-            "unresolved-import:{}:{}",
-            relative_key_path(&item.import.path, root),
-            item.import.specifier
-        ));
+
+    fn add_unused_dependencies(&mut self, items: &[fallow_core::results::UnusedDependencyFinding]) {
+        for item in items {
+            self.insert(unused_dependency_key(&item.dep, self.root));
+        }
     }
-    for item in unlisted_dependencies.iter().map(|f| &f.dep) {
-        keys.insert(unlisted_dependency_key(item, root));
+
+    fn add_unused_dev_dependencies(
+        &mut self,
+        items: &[fallow_core::results::UnusedDevDependencyFinding],
+    ) {
+        for item in items {
+            self.insert(unused_dependency_key(&item.dep, self.root));
+        }
     }
-    for item in duplicate_exports {
-        keys.insert(duplicate_export_key(item, root));
+
+    fn add_unused_optional_dependencies(
+        &mut self,
+        items: &[fallow_core::results::UnusedOptionalDependencyFinding],
+    ) {
+        for item in items {
+            self.insert(unused_dependency_key(&item.dep, self.root));
+        }
     }
-    for item in type_only_dependencies {
-        keys.insert(format!(
-            "type-only-dependency:{}:{}",
-            relative_key_path(&item.dep.path, root),
-            item.dep.package_name
-        ));
+
+    fn add_unused_enum_members(&mut self, items: &[fallow_core::results::UnusedEnumMemberFinding]) {
+        for item in items {
+            self.insert(unused_member_key(
+                "unused-enum-member",
+                &item.member,
+                self.root,
+            ));
+        }
     }
-    for item in test_only_dependencies {
-        keys.insert(format!(
-            "test-only-dependency:{}:{}",
-            relative_key_path(&item.dep.path, root),
-            item.dep.package_name
-        ));
+
+    fn add_unused_class_members(
+        &mut self,
+        items: &[fallow_core::results::UnusedClassMemberFinding],
+    ) {
+        for item in items {
+            self.insert(unused_member_key(
+                "unused-class-member",
+                &item.member,
+                self.root,
+            ));
+        }
     }
-    for item in circular_dependencies {
-        keys.insert(circular_dependency_key(item, root));
+
+    fn add_unresolved_imports(&mut self, items: &[fallow_core::results::UnresolvedImportFinding]) {
+        for item in items {
+            self.insert(format!(
+                "unresolved-import:{}:{}",
+                relative_key_path(&item.import.path, self.root),
+                item.import.specifier
+            ));
+        }
     }
-    for item in re_export_cycles {
-        keys.insert(re_export_cycle_key(item, root));
+
+    fn add_unlisted_dependencies(
+        &mut self,
+        items: &[fallow_core::results::UnlistedDependencyFinding],
+    ) {
+        for item in items {
+            self.insert(unlisted_dependency_key(&item.dep, self.root));
+        }
     }
-    for item in boundary_violations {
-        keys.insert(boundary_violation_key(item, root));
+
+    fn add_duplicate_exports(&mut self, items: &[fallow_core::results::DuplicateExportFinding]) {
+        for item in items {
+            self.insert(duplicate_export_key(item, self.root));
+        }
     }
-    for item in boundary_coverage_violations {
-        keys.insert(boundary_coverage_key(item, root));
+
+    fn add_type_only_dependencies(
+        &mut self,
+        items: &[fallow_core::results::TypeOnlyDependencyFinding],
+    ) {
+        for item in items {
+            self.insert(format!(
+                "type-only-dependency:{}:{}",
+                relative_key_path(&item.dep.path, self.root),
+                item.dep.package_name
+            ));
+        }
     }
-    for item in boundary_call_violations {
-        keys.insert(boundary_call_key(item, root));
+
+    fn add_test_only_dependencies(
+        &mut self,
+        items: &[fallow_core::results::TestOnlyDependencyFinding],
+    ) {
+        for item in items {
+            self.insert(format!(
+                "test-only-dependency:{}:{}",
+                relative_key_path(&item.dep.path, self.root),
+                item.dep.package_name
+            ));
+        }
     }
-    for item in policy_violations {
-        keys.insert(format!(
-            "policy-violation:{}:{}/{}:{}",
-            relative_key_path(&item.violation.path, root),
-            item.violation.pack,
-            item.violation.rule_id,
-            item.violation.matched
-        ));
+
+    fn add_circular_dependencies(
+        &mut self,
+        items: &[fallow_core::results::CircularDependencyFinding],
+    ) {
+        for item in items {
+            self.insert(circular_dependency_key(item, self.root));
+        }
     }
-    for item in stale_suppressions {
-        keys.insert(stale_suppression_key(item, root));
+
+    fn add_re_export_cycles(&mut self, items: &[fallow_core::results::ReExportCycleFinding]) {
+        for item in items {
+            self.insert(re_export_cycle_key(item, self.root));
+        }
     }
-    for item in unresolved_catalog_references {
-        keys.insert(unresolved_catalog_reference_key(item, root));
+
+    fn add_boundary_violations(
+        &mut self,
+        items: &[fallow_core::results::BoundaryViolationFinding],
+    ) {
+        for item in items {
+            self.insert(boundary_violation_key(item, self.root));
+        }
     }
-    for item in unused_catalog_entries {
-        keys.insert(unused_catalog_entry_key(&item.entry, root));
+
+    fn add_boundary_coverage_violations(
+        &mut self,
+        items: &[fallow_core::results::BoundaryCoverageViolationFinding],
+    ) {
+        for item in items {
+            self.insert(boundary_coverage_key(item, self.root));
+        }
     }
-    for item in empty_catalog_groups {
-        keys.insert(empty_catalog_group_key(&item.group, root));
+
+    fn add_boundary_call_violations(
+        &mut self,
+        items: &[fallow_core::results::BoundaryCallViolationFinding],
+    ) {
+        for item in items {
+            self.insert(boundary_call_key(item, self.root));
+        }
     }
-    for item in unused_dependency_overrides {
-        keys.insert(unused_dependency_override_key(item, root));
+
+    fn add_policy_violations(&mut self, items: &[fallow_core::results::PolicyViolationFinding]) {
+        for item in items {
+            self.insert(policy_violation_key(item, self.root));
+        }
     }
-    for item in misconfigured_dependency_overrides {
-        keys.insert(misconfigured_dependency_override_key(item, root));
+
+    fn add_stale_suppressions(&mut self, items: &[fallow_core::results::StaleSuppression]) {
+        for item in items {
+            self.insert(stale_suppression_key(item, self.root));
+        }
     }
-    keys
+
+    fn add_unresolved_catalog_references(
+        &mut self,
+        items: &[fallow_core::results::UnresolvedCatalogReferenceFinding],
+    ) {
+        for item in items {
+            self.insert(unresolved_catalog_reference_key(item, self.root));
+        }
+    }
+
+    fn add_unused_catalog_entries(
+        &mut self,
+        items: &[fallow_core::results::UnusedCatalogEntryFinding],
+    ) {
+        for item in items {
+            self.insert(unused_catalog_entry_key(&item.entry, self.root));
+        }
+    }
+
+    fn add_empty_catalog_groups(
+        &mut self,
+        items: &[fallow_core::results::EmptyCatalogGroupFinding],
+    ) {
+        for item in items {
+            self.insert(empty_catalog_group_key(&item.group, self.root));
+        }
+    }
+
+    fn add_unused_dependency_overrides(
+        &mut self,
+        items: &[fallow_core::results::UnusedDependencyOverrideFinding],
+    ) {
+        for item in items {
+            self.insert(unused_dependency_override_key(item, self.root));
+        }
+    }
+
+    fn add_misconfigured_dependency_overrides(
+        &mut self,
+        items: &[fallow_core::results::MisconfiguredDependencyOverrideFinding],
+    ) {
+        for item in items {
+            self.insert(misconfigured_dependency_override_key(item, self.root));
+        }
+    }
 }
 
 /// Retain only findings whose audit key was NOT present in `base` (i.e. was
@@ -553,15 +740,7 @@ pub(super) fn retain_introduced_dead_code(
     boundary_violations.retain(|item| keep(boundary_violation_key(item, root)));
     boundary_coverage_violations.retain(|item| keep(boundary_coverage_key(item, root)));
     boundary_call_violations.retain(|item| keep(boundary_call_key(item, root)));
-    policy_violations.retain(|item| {
-        keep(format!(
-            "policy-violation:{}:{}/{}:{}",
-            relative_key_path(&item.violation.path, root),
-            item.violation.pack,
-            item.violation.rule_id,
-            item.violation.matched
-        ))
-    });
+    policy_violations.retain(|item| keep(policy_violation_key(item, root)));
     stale_suppressions.retain(|item| keep(stale_suppression_key(item, root)));
     unresolved_catalog_references.retain(|item| keep(unresolved_catalog_reference_key(item, root)));
     unused_catalog_entries.retain(|item| keep(unused_catalog_entry_key(&item.entry, root)));
