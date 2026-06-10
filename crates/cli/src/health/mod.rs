@@ -566,32 +566,28 @@ fn execute_health_inner(
     let action_ctx =
         build_health_action_context(opts, &config, max_cyclomatic, max_cognitive, max_crap);
 
-    let grouping = if let Some(ref resolver) = group_resolver {
-        Some(grouping::build_health_grouping(
-            resolver,
-            &config.root,
-            &candidate_paths,
-            &grouping::HealthGroupingInput {
-                files: &files,
-                modules: &modules,
-                file_paths: &file_paths,
-                score_output: score_output.as_ref(),
-                file_scores: file_scores_slice,
-                findings: &findings,
-                hotspots: &hotspots,
-                large_functions: &large_functions,
-                targets: &targets,
-                score_requested: opts.score,
-                duplicates_config: opts.score.then_some(&config.duplicates),
-                needs_file_scores,
-                needs_hotspots: opts.hotspots || opts.targets,
-                show_vital_signs: !opts.score_only_output,
-                action_ctx: &action_ctx,
-            },
-        ))
-    } else {
-        None
-    };
+    let grouping = build_optional_health_grouping(
+        group_resolver.as_ref(),
+        &config.root,
+        &candidate_paths,
+        &grouping::HealthGroupingInput {
+            files: &files,
+            modules: &modules,
+            file_paths: &file_paths,
+            score_output: score_output.as_ref(),
+            file_scores: file_scores_slice,
+            findings: &findings,
+            hotspots: &hotspots,
+            large_functions: &large_functions,
+            targets: &targets,
+            score_requested: opts.score,
+            duplicates_config: opts.score.then_some(&config.duplicates),
+            needs_file_scores,
+            needs_hotspots: opts.hotspots || opts.targets,
+            show_vital_signs: !opts.score_only_output,
+            action_ctx: &action_ctx,
+        },
+    );
 
     let report = assemble_health_report(
         opts,
@@ -681,6 +677,17 @@ fn prepare_health_coverage_settings(
         report_coverage_gaps,
         enforce_coverage_gaps,
         istanbul_coverage,
+    })
+}
+
+fn build_optional_health_grouping(
+    resolver: Option<&crate::report::OwnershipResolver>,
+    project_root: &std::path::Path,
+    candidate_paths: &rustc_hash::FxHashSet<std::path::PathBuf>,
+    input: &grouping::HealthGroupingInput<'_>,
+) -> Option<HealthGrouping> {
+    resolver.map(|resolver| {
+        grouping::build_health_grouping(resolver, project_root, candidate_paths, input)
     })
 }
 
