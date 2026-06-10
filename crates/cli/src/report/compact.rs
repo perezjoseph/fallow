@@ -163,149 +163,222 @@ fn compact_misconfigured_override_line(
 /// Build compact output lines for analysis results.
 /// Each issue is represented as a single `prefix:details` line.
 pub fn build_compact_lines(results: &AnalysisResults, root: &Path) -> Vec<String> {
-    let rel = |p: &Path| compact_path(p, root);
+    CompactLineBuilder::new(results, root).build()
+}
 
-    let compact_export = |export: &UnusedExport, kind: &str, re_kind: &str| -> String {
-        let tag = if export.is_re_export { re_kind } else { kind };
+struct CompactLineBuilder<'a> {
+    lines: Vec<String>,
+    results: &'a AnalysisResults,
+    root: &'a Path,
+}
+
+impl<'a> CompactLineBuilder<'a> {
+    fn new(results: &'a AnalysisResults, root: &'a Path) -> Self {
+        Self {
+            lines: Vec::new(),
+            results,
+            root,
+        }
+    }
+
+    fn build(mut self) -> Vec<String> {
+        self.push_core_lines();
+        self.push_unused_dependency_lines();
+        self.push_member_lines();
+        self.push_secondary_dependency_lines();
+        self.push_graph_lines();
+        self.push_workspace_lines();
+        self.lines
+    }
+
+    fn rel(&self, path: &Path) -> String {
+        compact_path(path, self.root)
+    }
+
+    fn unused_export_line(&self, export: &UnusedExport) -> String {
+        let tag = if export.is_re_export {
+            "unused-re-export"
+        } else {
+            "unused-export"
+        };
         format!(
             "{}:{}:{}:{}",
             tag,
-            rel(&export.path),
+            self.rel(&export.path),
             export.line,
             export.export_name
         )
-    };
+    }
 
-    let compact_member = |member: &UnusedMember, kind: &str| -> String {
+    fn unused_type_line(&self, export: &UnusedExport) -> String {
+        let tag = if export.is_re_export {
+            "unused-re-export-type"
+        } else {
+            "unused-type"
+        };
+        format!(
+            "{}:{}:{}:{}",
+            tag,
+            self.rel(&export.path),
+            export.line,
+            export.export_name
+        )
+    }
+
+    fn compact_member(&self, member: &UnusedMember, kind: &str) -> String {
         format!(
             "{}:{}:{}:{}.{}",
             kind,
-            rel(&member.path),
+            self.rel(&member.path),
             member.line,
             member.parent_name,
             member.member_name
         )
-    };
-
-    let mut lines = Vec::new();
-
-    for file in &results.unused_files {
-        lines.push(format!("unused-file:{}", rel(&file.file.path)));
-    }
-    for export in &results.unused_exports {
-        lines.push(compact_export(
-            &export.export,
-            "unused-export",
-            "unused-re-export",
-        ));
-    }
-    for export in &results.unused_types {
-        lines.push(compact_export(
-            &export.export,
-            "unused-type",
-            "unused-re-export-type",
-        ));
-    }
-    for leak in &results.private_type_leaks {
-        lines.push(format!(
-            "private-type-leak:{}:{}:{}->{}",
-            rel(&leak.leak.path),
-            leak.leak.line,
-            leak.leak.export_name,
-            leak.leak.type_name
-        ));
-    }
-    for dep in &results.unused_dependencies {
-        lines.push(format!("unused-dep:{}", dep.dep.package_name));
-    }
-    for dep in &results.unused_dev_dependencies {
-        lines.push(format!("unused-devdep:{}", dep.dep.package_name));
-    }
-    for dep in &results.unused_optional_dependencies {
-        lines.push(format!("unused-optionaldep:{}", dep.dep.package_name));
-    }
-    for member in &results.unused_enum_members {
-        lines.push(compact_member(&member.member, "unused-enum-member"));
-    }
-    for member in &results.unused_class_members {
-        lines.push(compact_member(&member.member, "unused-class-member"));
-    }
-    for import in &results.unresolved_imports {
-        lines.push(format!(
-            "unresolved-import:{}:{}:{}",
-            rel(&import.import.path),
-            import.import.line,
-            import.import.specifier
-        ));
-    }
-    for dep in &results.unlisted_dependencies {
-        lines.push(format!("unlisted-dep:{}", dep.dep.package_name));
-    }
-    for dup in &results.duplicate_exports {
-        lines.push(format!("duplicate-export:{}", dup.export.export_name));
-    }
-    for dep in &results.type_only_dependencies {
-        lines.push(format!("type-only-dep:{}", dep.dep.package_name));
-    }
-    for dep in &results.test_only_dependencies {
-        lines.push(format!("test-only-dep:{}", dep.dep.package_name));
-    }
-    for cycle in &results.circular_dependencies {
-        lines.push(compact_circular_dependency_line(cycle, root));
-    }
-    for cycle in &results.re_export_cycles {
-        lines.push(compact_re_export_cycle_line(cycle, root));
-    }
-    for v in &results.boundary_violations {
-        lines.push(compact_boundary_violation_line(v, root));
-    }
-    for v in &results.boundary_coverage_violations {
-        lines.push(compact_boundary_coverage_line(v, root));
-    }
-    for v in &results.boundary_call_violations {
-        lines.push(compact_boundary_call_line(v, root));
-    }
-    for v in &results.policy_violations {
-        lines.push(format!(
-            "policy-violation:{}:{}:{} banned by {}/{}",
-            rel(&v.violation.path),
-            v.violation.line,
-            v.violation.matched,
-            v.violation.pack,
-            v.violation.rule_id,
-        ));
-    }
-    for s in &results.stale_suppressions {
-        lines.push(compact_stale_suppression_line(s, root));
-    }
-    for entry in &results.unused_catalog_entries {
-        lines.push(format!(
-            "unused-catalog-entry:{}:{}:{}:{}",
-            rel(&entry.entry.path),
-            entry.entry.line,
-            entry.entry.catalog_name,
-            entry.entry.entry_name,
-        ));
-    }
-    for group in &results.empty_catalog_groups {
-        lines.push(format!(
-            "empty-catalog-group:{}:{}:{}",
-            rel(&group.group.path),
-            group.group.line,
-            group.group.catalog_name,
-        ));
-    }
-    for finding in &results.unresolved_catalog_references {
-        lines.push(compact_catalog_reference_line(finding, root));
-    }
-    for finding in &results.unused_dependency_overrides {
-        lines.push(compact_unused_override_line(finding, root));
-    }
-    for finding in &results.misconfigured_dependency_overrides {
-        lines.push(compact_misconfigured_override_line(finding, root));
     }
 
-    lines
+    fn push_core_lines(&mut self) {
+        for file in &self.results.unused_files {
+            self.lines
+                .push(format!("unused-file:{}", self.rel(&file.file.path)));
+        }
+        for export in &self.results.unused_exports {
+            self.lines.push(self.unused_export_line(&export.export));
+        }
+        for export in &self.results.unused_types {
+            self.lines.push(self.unused_type_line(&export.export));
+        }
+        for leak in &self.results.private_type_leaks {
+            self.lines.push(format!(
+                "private-type-leak:{}:{}:{}->{}",
+                self.rel(&leak.leak.path),
+                leak.leak.line,
+                leak.leak.export_name,
+                leak.leak.type_name
+            ));
+        }
+    }
+
+    fn push_unused_dependency_lines(&mut self) {
+        for dep in &self.results.unused_dependencies {
+            self.lines
+                .push(format!("unused-dep:{}", dep.dep.package_name));
+        }
+        for dep in &self.results.unused_dev_dependencies {
+            self.lines
+                .push(format!("unused-devdep:{}", dep.dep.package_name));
+        }
+        for dep in &self.results.unused_optional_dependencies {
+            self.lines
+                .push(format!("unused-optionaldep:{}", dep.dep.package_name));
+        }
+    }
+
+    fn push_member_lines(&mut self) {
+        for member in &self.results.unused_enum_members {
+            self.lines
+                .push(self.compact_member(&member.member, "unused-enum-member"));
+        }
+        for member in &self.results.unused_class_members {
+            self.lines
+                .push(self.compact_member(&member.member, "unused-class-member"));
+        }
+        for import in &self.results.unresolved_imports {
+            self.lines.push(format!(
+                "unresolved-import:{}:{}:{}",
+                self.rel(&import.import.path),
+                import.import.line,
+                import.import.specifier
+            ));
+        }
+    }
+
+    fn push_secondary_dependency_lines(&mut self) {
+        for dep in &self.results.unlisted_dependencies {
+            self.lines
+                .push(format!("unlisted-dep:{}", dep.dep.package_name));
+        }
+        for dup in &self.results.duplicate_exports {
+            self.lines
+                .push(format!("duplicate-export:{}", dup.export.export_name));
+        }
+        for dep in &self.results.type_only_dependencies {
+            self.lines
+                .push(format!("type-only-dep:{}", dep.dep.package_name));
+        }
+        for dep in &self.results.test_only_dependencies {
+            self.lines
+                .push(format!("test-only-dep:{}", dep.dep.package_name));
+        }
+    }
+
+    fn push_graph_lines(&mut self) {
+        for cycle in &self.results.circular_dependencies {
+            self.lines
+                .push(compact_circular_dependency_line(cycle, self.root));
+        }
+        for cycle in &self.results.re_export_cycles {
+            self.lines
+                .push(compact_re_export_cycle_line(cycle, self.root));
+        }
+        for violation in &self.results.boundary_violations {
+            self.lines
+                .push(compact_boundary_violation_line(violation, self.root));
+        }
+        for violation in &self.results.boundary_coverage_violations {
+            self.lines
+                .push(compact_boundary_coverage_line(violation, self.root));
+        }
+        for violation in &self.results.boundary_call_violations {
+            self.lines
+                .push(compact_boundary_call_line(violation, self.root));
+        }
+        for violation in &self.results.policy_violations {
+            self.lines.push(format!(
+                "policy-violation:{}:{}:{} banned by {}/{}",
+                self.rel(&violation.violation.path),
+                violation.violation.line,
+                violation.violation.matched,
+                violation.violation.pack,
+                violation.violation.rule_id,
+            ));
+        }
+        for suppression in &self.results.stale_suppressions {
+            self.lines
+                .push(compact_stale_suppression_line(suppression, self.root));
+        }
+    }
+
+    fn push_workspace_lines(&mut self) {
+        for entry in &self.results.unused_catalog_entries {
+            self.lines.push(format!(
+                "unused-catalog-entry:{}:{}:{}:{}",
+                self.rel(&entry.entry.path),
+                entry.entry.line,
+                entry.entry.catalog_name,
+                entry.entry.entry_name,
+            ));
+        }
+        for group in &self.results.empty_catalog_groups {
+            self.lines.push(format!(
+                "empty-catalog-group:{}:{}:{}",
+                self.rel(&group.group.path),
+                group.group.line,
+                group.group.catalog_name,
+            ));
+        }
+        for finding in &self.results.unresolved_catalog_references {
+            self.lines
+                .push(compact_catalog_reference_line(finding, self.root));
+        }
+        for finding in &self.results.unused_dependency_overrides {
+            self.lines
+                .push(compact_unused_override_line(finding, self.root));
+        }
+        for finding in &self.results.misconfigured_dependency_overrides {
+            self.lines
+                .push(compact_misconfigured_override_line(finding, self.root));
+        }
+    }
 }
 
 /// Print grouped compact output: each line is prefixed with the group key.
