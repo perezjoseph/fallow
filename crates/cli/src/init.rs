@@ -553,6 +553,8 @@ pub struct InitOptions<'a> {
     pub agents: bool,
     pub hooks: bool,
     pub branch: Option<&'a str>,
+    pub decline: bool,
+    pub quiet: bool,
 }
 
 /// Options for installing a managed Git pre-commit hook.
@@ -571,6 +573,9 @@ pub struct GitHooksUninstallOptions<'a> {
 }
 
 pub fn run_init(opts: &InitOptions<'_>) -> ExitCode {
+    if opts.decline {
+        return run_init_decline(opts.root, opts.quiet);
+    }
     if opts.agents {
         return run_init_agents(opts.root);
     }
@@ -583,6 +588,26 @@ pub fn run_init(opts: &InitOptions<'_>) -> ExitCode {
         });
     }
     run_init_config(opts.root, opts.use_toml)
+}
+
+/// `init --decline`: persist a deliberate "stay unconfigured" decision so the
+/// first-contact setup hint and the `setup` next-step stop appearing for this
+/// project. Storage is a field in the existing Impact store under `.fallow/`
+/// (no new state file); this neither enables Impact tracking nor writes a
+/// config file.
+fn run_init_decline(root: &Path, quiet: bool) -> ExitCode {
+    let newly = crate::impact::decline_onboarding(root);
+    if !quiet {
+        println!(
+            "{}",
+            if newly {
+                "Fallow setup hints disabled for this project."
+            } else {
+                "Fallow setup hints were already disabled for this project."
+            }
+        );
+    }
+    ExitCode::SUCCESS
 }
 
 fn run_init_config(root: &Path, use_toml: bool) -> ExitCode {
@@ -1009,6 +1034,8 @@ mod tests {
             agents: false,
             hooks: false,
             branch: None,
+            decline: false,
+            quiet: false,
         }
     }
 
@@ -1019,6 +1046,8 @@ mod tests {
             agents: true,
             hooks: false,
             branch: None,
+            decline: false,
+            quiet: false,
         }
     }
 
@@ -1029,6 +1058,8 @@ mod tests {
             agents: false,
             hooks: true,
             branch,
+            decline: false,
+            quiet: false,
         }
     }
 

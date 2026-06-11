@@ -130,7 +130,7 @@ fn setup_pointer(offer_setup: bool) -> Option<NextStep> {
 /// Shared first-contact gate for the `setup` next-step and the human setup hint
 /// on bare `fallow`: the project has no fallow config (searched up to the repo
 /// root, same as config loading), the run is not in CI, and onboarding has not
-/// been declined for this project (`fallow impact decline-onboarding`).
+/// been declined for this project (`fallow init --decline`).
 #[must_use]
 pub fn setup_pointer_applicable(root: &Path) -> bool {
     fallow_config::FallowConfig::find_config_path(root).is_none()
@@ -141,7 +141,7 @@ pub fn setup_pointer_applicable(root: &Path) -> bool {
 /// One-line human setup hint for bare `fallow` output: the prose counterpart of
 /// the `setup` next-step (agents get the JSON form, humans get this line).
 /// Worded as an offer, not a deficiency: zero-config is a supported happy path.
-pub const SETUP_HINT: &str = "Setup: `fallow init --agents` writes an agent guide; `fallow hooks install --target agent` adds a commit gate (hide this hint: `fallow impact decline-onboarding`).";
+pub const SETUP_HINT: &str = "Setup: `fallow init --agents` writes an agent guide; `fallow hooks install --target agent` adds a commit gate (hide this hint: `fallow init --decline`).";
 
 /// `trace-clone`: see sibling locations and an extract-function suggestion for a
 /// duplicated block. Uses the smallest fingerprint for run-to-run determinism.

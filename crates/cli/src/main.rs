@@ -591,6 +591,12 @@ enum Command {
         /// Fallback base branch/ref for the pre-commit hook when no upstream is set
         #[arg(long, requires = "hooks")]
         branch: Option<String>,
+
+        /// Record that this project deliberately stays unconfigured: persists a
+        /// decline so the first-contact setup hint and the `setup` next-step
+        /// stop appearing here. Writes no config file; idempotent
+        #[arg(long, conflicts_with_all = ["toml", "agents", "hooks", "branch"])]
+        decline: bool,
     },
 
     /// Install or remove fallow-managed Git and agent hooks.
@@ -1339,9 +1345,6 @@ enum ImpactCli {
     Disable,
     /// Show whether Impact tracking is enabled and how much history exists.
     Status,
-    /// Persist that the local agent onboarding prompt was declined.
-    #[command(hide = true)]
-    DeclineOnboarding,
 }
 
 #[derive(clap::Subcommand)]
@@ -3150,12 +3153,15 @@ fn dispatch_subcommand(command: Command, dispatch: &DispatchContext<'_>) -> Exit
             agents,
             hooks,
             branch,
+            decline,
         } => init::run_init(&init::InitOptions {
             root,
             use_toml: toml,
             agents,
             hooks,
             branch: branch.as_deref(),
+            decline,
+            quiet,
         }),
         Command::Hooks { subcommand } => run_hooks_command(root, subcommand, output),
         Command::Ci { subcommand } => ci::run(map_ci_subcommand(subcommand), output),
@@ -3509,20 +3515,6 @@ fn dispatch_impact(
             ExitCode::SUCCESS
         }
         Some(ImpactCli::Status) | None => render_impact_status(root, output),
-        Some(ImpactCli::DeclineOnboarding) => {
-            let newly = impact::decline_onboarding(root);
-            if !quiet {
-                println!(
-                    "{}",
-                    if newly {
-                        "Fallow agent onboarding prompt disabled for this project."
-                    } else {
-                        "Fallow agent onboarding prompt was already disabled for this project."
-                    }
-                );
-            }
-            ExitCode::SUCCESS
-        }
     }
 }
 
