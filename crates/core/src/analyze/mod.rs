@@ -1202,17 +1202,17 @@ fn run_member_and_dependency_detectors(
 ) -> (AnalysisResults, AnalysisResults) {
     rayon::join(
         || {
-            run_member_detectors(
-                input.graph,
-                input.resolved_modules,
-                input.modules,
-                input.config,
-                input.suppressions,
-                input.line_offsets_by_file,
-                input.user_class_members,
-                input.public_api_entry_points,
-                input.declared_deps,
-            )
+            run_member_detectors(MemberDetectorInput {
+                graph: input.graph,
+                resolved_modules: input.resolved_modules,
+                modules: input.modules,
+                config: input.config,
+                suppressions: input.suppressions,
+                line_offsets_by_file: input.line_offsets_by_file,
+                user_class_members: input.user_class_members,
+                public_api_entry_points: input.public_api_entry_points,
+                declared_deps: input.declared_deps,
+            })
         },
         || {
             run_dependency_detectors(
@@ -1678,53 +1678,52 @@ fn run_export_detectors(
     results
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "member detection needs graph context plus public API and allowlist filters"
-)]
-fn run_member_detectors(
-    graph: &ModuleGraph,
-    resolved_modules: &[ResolvedModule],
-    modules: &[ModuleInfo],
-    config: &ResolvedConfig,
-    suppressions: &crate::suppress::SuppressionContext<'_>,
-    line_offsets_by_file: &LineOffsetsMap<'_>,
-    user_class_members: &[fallow_config::UsedClassMemberRule],
-    public_api_entry_points: &FxHashSet<FileId>,
-    declared_deps: &FxHashSet<String>,
-) -> AnalysisResults {
+#[derive(Clone, Copy)]
+struct MemberDetectorInput<'a> {
+    graph: &'a ModuleGraph,
+    resolved_modules: &'a [ResolvedModule],
+    modules: &'a [ModuleInfo],
+    config: &'a ResolvedConfig,
+    suppressions: &'a crate::suppress::SuppressionContext<'a>,
+    line_offsets_by_file: &'a LineOffsetsMap<'a>,
+    user_class_members: &'a [fallow_config::UsedClassMemberRule],
+    public_api_entry_points: &'a FxHashSet<FileId>,
+    declared_deps: &'a FxHashSet<String>,
+}
+
+fn run_member_detectors(input: MemberDetectorInput<'_>) -> AnalysisResults {
     let mut results = AnalysisResults::default();
     // Store-member detection activates only when Pinia is a declared dependency,
     // so an unrelated user `defineStore`-named helper in a non-Pinia project
     // never fires. The harvest is intentionally loose at extraction time; this
     // is the activation boundary.
-    let store_members_active = config.rules.unused_store_members != Severity::Off
-        && (declared_deps.contains("pinia") || declared_deps.contains("@pinia/nuxt"));
-    if config.rules.unused_enum_members == Severity::Off
-        && config.rules.unused_class_members == Severity::Off
+    let store_members_active = input.config.rules.unused_store_members != Severity::Off
+        && (input.declared_deps.contains("pinia") || input.declared_deps.contains("@pinia/nuxt"));
+    if input.config.rules.unused_enum_members == Severity::Off
+        && input.config.rules.unused_class_members == Severity::Off
         && !store_members_active
     {
         return results;
     }
 
     let member_results = find_unused_members_with_public_api_entry_points(
-        graph,
-        resolved_modules,
-        modules,
-        suppressions,
-        line_offsets_by_file,
-        user_class_members,
-        &config.ignore_decorators,
-        public_api_entry_points,
+        input.graph,
+        input.resolved_modules,
+        input.modules,
+        input.suppressions,
+        input.line_offsets_by_file,
+        input.user_class_members,
+        &input.config.ignore_decorators,
+        input.public_api_entry_points,
     );
-    if config.rules.unused_enum_members != Severity::Off {
+    if input.config.rules.unused_enum_members != Severity::Off {
         results.unused_enum_members = member_results
             .enum_members
             .into_iter()
             .map(UnusedEnumMemberFinding::with_actions)
             .collect();
     }
-    if config.rules.unused_class_members != Severity::Off {
+    if input.config.rules.unused_class_members != Severity::Off {
         results.unused_class_members = member_results
             .class_members
             .into_iter()
