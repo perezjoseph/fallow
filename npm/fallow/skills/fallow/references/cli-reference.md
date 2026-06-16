@@ -61,6 +61,13 @@ Common global flags for this command: [`--format`](#global-flags), [`--quiet`](#
 | `--private-type-leaks` | Opt-in API hygiene check (default `off`) for exported signatures that reference same-file private types. Storybook `*.stories.*` story files and framework routing convention files (Next.js App + Pages Router, Gatsby, Remix v2, TanStack Router, Expo Router) are skipped to avoid noise. Enable via this flag or `private-type-leaks: "warn"` / `"error"` in [`rules`](#rules-configuration). |
 | `--unused-enum-members` | Unused enum members |
 | `--unused-class-members` | Unused class members |
+| `--unused-store-members` | Unused Pinia store members |
+| `--unprovided-injects` | inject() / getContext() reads a key that no provide() / setContext() supplies |
+| `--unrendered-components` | A Vue / Svelte component is reachable through a barrel but rendered nowhere |
+| `--unused-component-props` | A Vue defineProps prop or React component prop is referenced nowhere in its own component |
+| `--unused-component-emits` | A Vue <script setup> defineEmits event is emitted nowhere in its own component |
+| `--unused-server-actions` | A Next.js Server Action exported from a "use server" file is referenced by no code in the project |
+| `--unused-load-data-keys` | A SvelteKit load() return-object key is read by no consumer |
 | `--unresolved-imports` | Unresolved imports |
 | `--unlisted-deps` | Unlisted dependencies |
 | `--duplicate-exports` | Duplicate exports |
@@ -384,6 +391,7 @@ Angular templates contribute synthetic `<template>` complexity findings whenever
 | `--ownership` | `bool` | `false` | Attach ownership signals to hotspot entries: bus factor (Avelino truck factor), contributor count, top contributor with stale-days, recent contributors (top-3), `suggested_reviewers`, declared CODEOWNERS owner, `ownership_state`, ownership drift, unowned-hotspot detection. Human output gains a project-level summary line. JSON adds `low-bus-factor`, `unowned-hotspot`, `ownership-drift` action types. Test files get a `[test]` tag. Implies `--hotspots`. Requires git. |
 | `--ownership-emails` | `raw\|handle\|anonymized\|hash` | - | Privacy mode for author emails. `handle` shows the local-part only (default, with GitHub noreply unwrap and deterministic same-handle disambiguation). `anonymized` emits stable `xxh3:` pseudonyms; `hash` remains accepted as the legacy spelling. `raw` shows full addresses. Use `anonymized` in regulated environments. Implies `--ownership`. Configure default via `health.ownership.emailMode`. |
 | `--targets` | `bool` | `false` | Show only refactoring targets: ranked recommendations based on complexity, coupling, churn, and dead code signals. Categories: churn+complexity, circular dep, high impact, dead code, complexity, coupling. When no section flags are set, all sections are shown by default. Each target's JSON can include `direct_callers[]` (direct importers with the symbols they import) and `clone_siblings[]` (duplicate-code siblings with stable `dup:<8hex>` fingerprints for `fallow dupes --trace`); both omitted when empty. Human output adds `importers:` / `clones:` lines only when that evidence is present. |
+| `--css` | `bool` | `false` | Add structural CSS analytics: specificity hotspots, !important density, over-complex selectors, deep nesting, and conservative cleanup candidates. Standard CSS is parsed structurally; preprocessor sources are scanned only where fallow can avoid expanding Sass/Less semantics. |
 | `--effort` | `low\|medium\|high` | - | Filter refactoring targets by effort level. Implies `--targets`. |
 | `--score` | `bool` | `false` | Show only the project health score (0-100) with letter grade (A/B/C/D/F). The score is included by default when no section flags are set. JSON includes `health_score` object with `score`, `grade`, and `penalties` breakdown. As of v2.55.0, plain `--score` skips the churn-backed hotspot penalty so it does not run a `git log` shell-out per invocation; pass `--hotspots` (or `--targets` with `--score`) to include the hotspot penalty. Snapshot (`--save-snapshot`) and trend (`--trend`) flows still trigger hotspot vital signs so saved data stays complete. |
 | `--min-score` | `string` | - | Fail (exit 1) only when the health score is below this threshold. Implies `--score`. Authoritative CI quality gate: when set, complexity findings are demoted to informational and the exit code is driven solely by the score, so `--min-score 0` always exits 0. Composes with `--min-severity`. |
@@ -493,7 +501,7 @@ fallow health --format json --quiet --trend
 {
   "kind": "health",
   "schema_version": 7,
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 32,
   "summary": {
     "files_analyzed": 482,
@@ -880,7 +888,7 @@ fallow audit \
 {
   "kind": "audit",
   "schema_version": 7,
-  "version": "2.96.0",
+  "version": "2.97.0",
   "command": "audit",
   "verdict": "fail",
   "changed_files_count": 12,
@@ -955,7 +963,7 @@ fallow flags --format json --quiet --workspace my-package
 ```json
 {
   "schema_version": 7,
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 116,
   "feature_flags": [],
   "total_flags": 0
@@ -1055,7 +1063,7 @@ fallow security --gate newly-reachable --changed-since origin/main
 {
   "kind": "security",
   "schema_version": "4",
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 42,
   "config": {
     "rules": {
@@ -1084,7 +1092,7 @@ fallow security --gate newly-reachable --changed-since origin/main
 {
   "kind": "security",
   "schema_version": "4",
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 42,
   "config": {
     "rules": {
@@ -1701,7 +1709,7 @@ The HTTP layer mirrors the bash `gh_api_retry` / `curl_retry` helpers: `FALLOW_A
 {
   "kind": "dead-code",
   "schema_version": 7,
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 45,
   "total_issues": 12,
   "entry_points": {
@@ -1861,7 +1869,7 @@ When `--baseline` is used in combined output, the JSON includes a `baseline_delt
 {
   "kind": "dupes",
   "schema_version": 7,
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 82,
   "total_clones": 15,
   "total_lines_duplicated": 230,
@@ -1905,11 +1913,11 @@ When running `fallow` with no subcommand (all analyses), the JSON output combine
 {
   "kind": "combined",
   "schema_version": 7,
-  "version": "2.96.0",
+  "version": "2.97.0",
   "elapsed_ms": 159,
   "check": {
     "schema_version": 7,
-    "version": "2.96.0",
+    "version": "2.97.0",
     "elapsed_ms": 45,
     "total_issues": 12,
     "unused_files": [],
@@ -2131,4 +2139,4 @@ preset = "bulletproof"
 
 ### Valid Issue Type Tokens
 
-`unused-file`, `unused-export`, `unused-type`, `unused-dependency`, `unused-dev-dependency`, `unused-enum-member`, `unused-class-member`, `unresolved-import`, `unlisted-dependency`, `duplicate-export`, `circular-dependency`, `re-export-cycle`, `boundary-violation`, `policy-violation`, `unused-optional-dependency`, `type-only-dependency`, `test-only-dependency`, `code-duplication`
+`unused-file`, `unused-export`, `unused-type`, `unused-dependency`, `unused-dev-dependency`, `unused-enum-member`, `unused-class-member`, `unused-store-member`, `unresolved-import`, `unlisted-dependency`, `duplicate-export`, `circular-dependency`, `re-export-cycle`, `boundary-violation`, `policy-violation`, `unused-optional-dependency`, `type-only-dependency`, `test-only-dependency`, `code-duplication`

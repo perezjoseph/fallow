@@ -1,6 +1,6 @@
 # Fallow Roadmap
 
-> Last updated: 2026-06-13
+> Last updated: 2026-06-16
 
 This roadmap tracks planned work on Fallow. For shipped capabilities, see the [documentation](https://docs.fallow.tools) and [GitHub releases](https://github.com/fallow-rs/fallow/releases).
 
