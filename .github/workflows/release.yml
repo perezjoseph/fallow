@@ -41,74 +41,62 @@ jobs:
         id: crates_io_auth
         uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe # v1.0.4
 
-      - name: Publish fallow-types
-        run: cargo publish -p fallow-types --no-verify || echo "Already published, skipping"
+      # Publish every workspace crate in dependency order. A crate that depends
+      # on a just-published sibling can race the crates.io index: the sibling
+      # uploads seconds earlier but the index has not propagated its new version
+      # yet, so `cargo publish` aborts with "failed to select a version for the
+      # requirement". The retry loop below waits that lag out.
+      #
+      # The error classification is load-bearing (incident v2.98.0). The old
+      # per-crate `|| echo "Already published, skipping"` swallowed EVERY
+      # failure, so fallow-cli's index-lag abort shipped a release with
+      # fallow-cli missing from crates.io while the job still reported success.
+      # Now: a genuine "already uploaded" is swallowed (idempotent re-runs),
+      # index-lag and clear network-transient errors are retried with backoff,
+      # and any OTHER failure fails the step instead of being masked.
+      - name: Publish crates to crates.io
+        shell: bash
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-config
-        run: cargo publish -p fallow-config --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-extract
-        run: cargo publish -p fallow-extract --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-graph
-        run: cargo publish -p fallow-graph --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-core
-        run: cargo publish -p fallow-core --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-license
-        run: cargo publish -p fallow-license --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-v8-coverage
-        run: cargo publish -p fallow-v8-coverage --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-cli
-        run: cargo publish -p fallow-cli --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
-
-      - name: Wait for crates.io index
-        run: sleep 30
-
-      - name: Publish fallow-mcp
-        run: cargo publish -p fallow-mcp --no-verify || echo "Already published, skipping"
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.crates_io_auth.outputs.token }}
+        run: |
+          set -uo pipefail
+          publish() {
+            crate="$1"
+            attempt=1
+            max_attempts=8
+            while :; do
+              if out=$(cargo publish -p "$crate" --no-verify 2>&1); then
+                printf '%s\n' "$out"
+                echo "::notice::${crate}: published"
+                return 0
+              fi
+              printf '%s\n' "$out"
+              # Already on the registry (idempotent re-run) -> not an error.
+              if printf '%s' "$out" | grep -qiE 'already (been )?uploaded|already exists'; then
+                echo "::notice::${crate}: already published, skipping"
+                return 0
+              fi
+              # crates.io index lag for a just-published dependency, or a clear
+              # network-transient error -> wait and retry.
+              if [ "$attempt" -lt "$max_attempts" ] && printf '%s' "$out" | grep -qiE 'failed to select a version for the requirement|candidate versions found which did|429 Too Many Requests|50[234] |Service Unavailable|Gateway Time-?out|timed out|error sending request'; then
+                echo "::warning::${crate}: transient publish error (attempt ${attempt}/${max_attempts}); retrying in 30s"
+                sleep 30
+                attempt=$((attempt + 1))
+                continue
+              fi
+              # Anything else is a real failure: do NOT mask it.
+              echo "::error::${crate}: cargo publish failed and is neither already-published nor a known transient error"
+              return 1
+            done
+          }
+          first=1
+          for crate in fallow-types fallow-config fallow-extract fallow-graph fallow-core fallow-license fallow-v8-coverage fallow-cli fallow-mcp; do
+            # Settle delay between crates so a dependent crate usually finds its
+            # dependency already indexed; the retry loop is the real guarantee.
+            if [ "$first" = 0 ]; then sleep 30; fi
+            first=0
+            publish "$crate" || exit 1
+          done
 
   build:
     name: Build (${{ matrix.target }})
